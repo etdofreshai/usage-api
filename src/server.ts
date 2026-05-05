@@ -1,5 +1,29 @@
+import { promises as fs } from "node:fs";
 import express from "express";
 import { Poller } from "./cache.js";
+
+// Load env from the shared volume (same .env that ai-sessions uses) so secrets
+// live alongside the OAuth credentials instead of in Dokploy. Run before any
+// `process.env.*` reads below.
+const ENV_FILE = process.env.SHARED_ENV_FILE ?? "/home/node/workspace/.env";
+try {
+  const raw = await fs.readFile(ENV_FILE, "utf8");
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq < 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let val = trimmed.slice(eq + 1).trim();
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    if (!(key in process.env)) process.env[key] = val;
+  }
+  console.log(`loaded env from ${ENV_FILE}`);
+} catch (err: any) {
+  if (err?.code !== "ENOENT") console.warn(`could not read ${ENV_FILE}: ${err?.message ?? err}`);
+}
 import { fetchClaudeUsage } from "./providers/anthropic.js";
 import { fetchCodexUsage } from "./providers/codex.js";
 import { fetchZaiUsage } from "./providers/zai.js";

@@ -29,6 +29,10 @@ Each provider runs an independent `Poller`:
 
 ## Auth
 
+API keys load from the shared `/home/node/workspace/.env` (same volume as
+`ai-sessions`) on startup. Override the path with `SHARED_ENV_FILE`. Existing
+`process.env` values win, so Dokploy env vars still override the file.
+
 | Provider     | Source                                                  |
 |--------------|---------------------------------------------------------|
 | Claude Max   | `~/.claude/.credentials.json` (OAuth, auto-refreshes)   |

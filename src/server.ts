@@ -54,13 +54,74 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
 
+// Pacing math: given a window of length windowMs ending at resetAt, compute
+// what used% would be on a perfectly linear burn from windowStart to now.
+// slack = expected − used (positive = under pace, negative = over pace).
+function pacing(usedPct: number, resetIso: string | null, windowMs: number) {
+  if (!resetIso) return { expected_percent: null, slack: null };
+  const reset = Date.parse(resetIso);
+  if (!Number.isFinite(reset)) return { expected_percent: null, slack: null };
+  const elapsedMs = Date.now() - (reset - windowMs);
+  const expected = Math.max(0, Math.min(100, (elapsedMs / windowMs) * 100));
+  return { expected_percent: expected, slack: expected - usedPct };
+}
+
+const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
+const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000;
+const THIRTY_DAY_MS = 30 * 24 * 60 * 60 * 1000;
+
+function enrichClaude(snap: ReturnType<typeof claude.snapshot>) {
+  if (!snap.data) return snap;
+  const d = snap.data;
+  return {
+    ...snap,
+    data: {
+      ...d,
+      five_hour: { ...d.five_hour, ...pacing(d.five_hour.utilization, d.five_hour.resets_at, FIVE_HOUR_MS) },
+      seven_day: { ...d.seven_day, ...pacing(d.seven_day.utilization, d.seven_day.resets_at, SEVEN_DAY_MS) },
+    },
+  };
+}
+
+function enrichCodex(snap: ReturnType<typeof codex.snapshot>) {
+  if (!snap.data) return snap;
+  const d = snap.data;
+  const pMs = (d.primary.window_minutes || 300) * 60 * 1000;
+  const sMs = (d.secondary.window_minutes || 10080) * 60 * 1000;
+  return {
+    ...snap,
+    data: {
+      ...d,
+      primary: { ...d.primary, ...pacing(d.primary.used_percent, d.primary.resets_at, pMs) },
+      secondary: { ...d.secondary, ...pacing(d.secondary.used_percent, d.secondary.resets_at, sMs) },
+    },
+  };
+}
+
+function enrichZai(snap: ReturnType<NonNullable<typeof zai>["snapshot"]> | { data: null; error: string }) {
+  if (!("data" in snap) || !snap.data) return snap;
+  const d = snap.data;
+  return {
+    ...snap,
+    data: {
+      ...d,
+      five_hour: d.five_hour
+        ? { ...d.five_hour, ...pacing(d.five_hour.used_percent, d.five_hour.resets_at, FIVE_HOUR_MS) }
+        : null,
+      monthly: d.monthly
+        ? { ...d.monthly, ...pacing(d.monthly.used_percent, d.monthly.resets_at, THIRTY_DAY_MS) }
+        : null,
+    },
+  };
+}
+
 app.get("/api/usage", (_req, res) => {
   res.json({
     timestamp: new Date().toISOString(),
     providers: {
-      claude: claude.snapshot(),
-      codex: codex.snapshot(),
-      zai: zai?.snapshot() ?? { data: null, error: "ZAI_API_KEY not set" },
+      claude: enrichClaude(claude.snapshot()),
+      codex: enrichCodex(codex.snapshot()),
+      zai: zai ? enrichZai(zai.snapshot()) : { data: null, error: "ZAI_API_KEY not set" },
       openrouter: openrouter?.snapshot() ?? { data: null, error: "OPENROUTER_API_KEY not set" },
       openai: openai?.snapshot() ?? { data: null, error: "OPENAI_ADMIN_KEY not set" },
     },

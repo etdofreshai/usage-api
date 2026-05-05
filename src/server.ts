@@ -33,9 +33,10 @@ import { fetchOpenAiUsage } from "./providers/openai.js";
 const app = express();
 const PORT = Number(process.env.PORT ?? 3000);
 
-const ZAI_KEY = process.env.ZAI_API_KEY;
-const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY;
-const OPENAI_KEY = process.env.OPENAI_ADMIN_KEY;
+// Accept the workspace .env's existing names as fallbacks.
+const ZAI_KEY = process.env.ZAI_API_KEY ?? process.env.ZAI_TOKEN;
+const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY ?? process.env.OPENROUTER_TOKEN;
+const OPENAI_KEY = process.env.OPENAI_ADMIN_KEY; // requires sk-admin-* — keep explicit
 
 const claude = new Poller("claude", fetchClaudeUsage);
 const codex = new Poller("codex", fetchCodexUsage);

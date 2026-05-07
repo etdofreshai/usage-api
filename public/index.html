@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>usage-api</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #14181d;
+    --panel-2: #1b2128;
+    --fg: #e7ecf2;
+    --muted: #8a96a4;
+    --accent: #5cc8ff;
+    --good: #6ee7a0;
+    --warn: #ffcc66;
+    --bad: #ff6b6b;
+    --border: #232a32;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; justify-content: space-between; align-items: baseline; padding: 18px 22px; border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: 0.02em; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  main { padding: 22px; display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .card h2 { margin: 0; padding: 12px 14px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .card h2 .stamp { font-weight: normal; font-size: 11px; text-transform: none; letter-spacing: 0; }
+  .card .body { padding: 12px 14px; }
+  .row { display: grid; grid-template-columns: 110px 1fr 60px; gap: 10px; align-items: center; margin: 8px 0; }
+  .row .label { color: var(--muted); font-size: 12px; }
+  .row .pct { text-align: right; font-variant-numeric: tabular-nums; }
+  .bar { height: 10px; background: var(--panel-2); border-radius: 5px; position: relative; overflow: hidden; border: 1px solid var(--border); }
+  .bar > .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); transition: width 400ms ease; }
+  .bar > .pace { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--fg); opacity: 0.6; }
+  .bar.good > .fill { background: var(--good); }
+  .bar.warn > .fill { background: var(--warn); }
+  .bar.bad > .fill { background: var(--bad); }
+  .sub { color: var(--muted); font-size: 12px; margin-top: 4px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .err { color: var(--bad); font-size: 12px; padding: 6px 0; white-space: pre-wrap; }
+  .empty { color: var(--muted); font-size: 12px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .dot.ok { background: var(--good); }
+  .dot.err { background: var(--bad); }
+  .dot.idle { background: var(--muted); }
+  pre.json { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-size: 11px; max-height: 200px; overflow: auto; color: var(--muted); }
+  details > summary { cursor: pointer; color: var(--muted); font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>usage-api</h1>
+  <div class="meta"><span id="status">connecting…</span> · refreshes every <span id="every">3</span>s · last <span id="ts">—</span></div>
+</header>
+<main id="grid"></main>
+
+<script>
+const REFRESH_MS = 3000;
+const grid = document.getElementById("grid");
+const statusEl = document.getElementById("status");
+const tsEl = document.getElementById("ts");
+document.getElementById("every").textContent = (REFRESH_MS / 1000).toFixed(0);
+
+function fmtPct(n) {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return n.toFixed(1) + "%";
+}
+function fmtTime(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleString();
+}
+function fmtRel(iso) {
+  if (!iso) return "—";
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!Number.isFinite(ms)) return "—";
+  const abs = Math.abs(ms);
+  const m = Math.round(abs / 60000);
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  const s = h ? `${h}h${rem ? " " + rem + "m" : ""}` : `${m}m`;
+  return ms >= 0 ? `in ${s}` : `${s} ago`;
+}
+function barClass(used, expected) {
+  if (used == null) return "";
+  if (expected == null) {
+    if (used >= 90) return "bad";
+    if (used >= 70) return "warn";
+    return "good";
+  }
+  const slack = expected - used;
+  if (slack < -10) return "bad";
+  if (slack < 0) return "warn";
+  return "good";
+}
+function bar(used, expected) {
+  const cls = barClass(used, expected);
+  const w = Math.max(0, Math.min(100, used ?? 0));
+  const pace = expected != null && Number.isFinite(expected)
+    ? `<div class="pace" style="left:${Math.max(0, Math.min(100, expected))}%"></div>`
+    : "";
+  return `<div class="bar ${cls}"><div class="fill" style="width:${w}%"></div>${pace}</div>`;
+}
+function metricRow(label, used, expected, resetIso) {
+  return `
+    <div class="row">
+      <div class="label">${label}</div>
+      ${bar(used, expected)}
+      <div class="pct">${fmtPct(used)}</div>
+    </div>
+    <div class="sub">
+      ${expected != null ? `pace ${fmtPct(expected)}` : ""}
+      ${resetIso ? `· resets ${fmtRel(resetIso)} (${fmtTime(resetIso)})` : ""}
+    </div>
+  `;
+}
+
+function renderClaude(snap) {
+  const d = snap.data;
+  if (!d) return `<div class="empty">no data yet</div>`;
+  const f = d.five_hour, w = d.seven_day;
+  return `
+    ${metricRow("5-hour", f?.utilization, f?.expected_percent, f?.resets_at)}
+    ${metricRow("7-day", w?.utilization, w?.expected_percent, w?.resets_at)}
+    ${d.seven_day_opus ? metricRow("7-day Opus", d.seven_day_opus.utilization, null, d.seven_day_opus.resets_at) : ""}
+  `;
+}
+function renderCodex(snap) {
+  const d = snap.data;
+  if (!d) return `<div class="empty">no data yet</div>`;
+  return `
+    ${metricRow("primary", d.primary?.used_percent, d.primary?.expected_percent, d.primary?.resets_at)}
+    ${metricRow("secondary", d.secondary?.used_percent, d.secondary?.expected_percent, d.secondary?.resets_at)}
+  `;
+}
+function renderZai(snap) {
+  const d = snap.data;
+  if (!d) return `<div class="empty">no data yet</div>`;
+  let out = "";
+  if (d.five_hour) out += metricRow("5-hour", d.five_hour.used_percent, d.five_hour.expected_percent, d.five_hour.resets_at);
+  if (d.monthly) out += metricRow("monthly", d.monthly.used_percent, d.monthly.expected_percent, d.monthly.resets_at);
+  return out || `<div class="empty">no metrics</div>`;
+}
+function renderRaw(snap) {
+  const d = snap.data;
+  if (!d) return `<div class="empty">no data yet</div>`;
+  return `<details><summary>raw</summary><pre class="json">${escapeHtml(JSON.stringify(d, null, 2))}</pre></details>`;
+}
+function escapeHtml(s) { return s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+const RENDERERS = {
+  claude: renderClaude,
+  codex: renderCodex,
+  zai: renderZai,
+  openrouter: renderRaw,
+  openai: renderRaw,
+};
+
+function statusDot(snap) {
+  if (!snap) return `<span class="dot idle"></span>`;
+  if (snap.error) return `<span class="dot err" title="${escapeHtml(String(snap.error))}"></span>`;
+  if (snap.data) return `<span class="dot ok"></span>`;
+  return `<span class="dot idle"></span>`;
+}
+
+function card(name, snap) {
+  const renderer = RENDERERS[name] || renderRaw;
+  const stamp = snap?.fetchedAt
+    ? `fetched ${fmtRel(snap.fetchedAt)}${snap.intervalSec ? ` · every ${snap.intervalSec}s` : ""}`
+    : "no fetch yet";
+  const body = snap?.error
+    ? `<div class="err">${escapeHtml(String(snap.error))}</div>${snap.data ? renderer(snap) : ""}`
+    : renderer(snap || {});
+  return `
+    <section class="card">
+      <h2>${statusDot(snap)}${name}<span class="stamp">${stamp}</span></h2>
+      <div class="body">${body}</div>
+    </section>
+  `;
+}
+
+async function tick() {
+  try {
+    const r = await fetch("/api/usage", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    statusEl.textContent = "live";
+    tsEl.textContent = fmtTime(j.timestamp);
+    const order = ["claude", "codex", "zai", "openrouter", "openai"];
+    grid.innerHTML = order.map(n => card(n, j.providers[n])).join("");
+  } catch (err) {
+    statusEl.textContent = "error: " + (err?.message ?? err);
+  }
+}
+
+tick();
+setInterval(tick, REFRESH_MS);
+</script>
+</body>
+</html>

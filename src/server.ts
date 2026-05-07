@@ -1,4 +1,6 @@
 import { promises as fs } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import express from "express";
 import { Poller } from "./cache.js";
 
@@ -128,12 +130,11 @@ app.get("/api/usage", (_req, res) => {
   });
 });
 
-app.get("/", (_req, res) => {
-  res.json({
-    name: "usage-api",
-    endpoints: ["/api/usage", "/api/health"],
-  });
-});
+// Serve the dashboard UI from /public.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// dist/server.js -> ../public ; src/server.ts (tsx) -> ../public
+const PUBLIC_DIR = path.resolve(__dirname, "..", "public");
+app.use(express.static(PUBLIC_DIR, { index: "index.html" }));
 
 app.listen(PORT, () => {
   console.log(`usage-api listening on http://localhost:${PORT}`);

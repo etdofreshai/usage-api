@@ -10,6 +10,7 @@ RUN npm install --omit=dev=false
 
 COPY --chown=node:node tsconfig.json ./
 COPY --chown=node:node src ./src
+COPY --chown=node:node public ./public
 RUN npx tsc
 
 ENV PORT=3000

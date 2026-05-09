@@ -26,12 +26,15 @@ interface CodexAuth {
   accountId?: string;
 }
 
-interface AuthFile {
-  tokens?: {
-    access_token?: string;
-    refresh_token?: string;
-    account_id?: string;
-  };
+interface AuthTokens {
+  access_token?: string;
+  refresh_token?: string;
+  account_id?: string;
+}
+// Codex CLI has shipped two layouts: tokens nested under `tokens`, and tokens
+// at the top level. Accept either.
+interface AuthFile extends AuthTokens {
+  tokens?: AuthTokens;
 }
 
 export interface CodexUsage {
@@ -45,7 +48,7 @@ async function readAuth(): Promise<CodexAuth | null> {
   try {
     const raw = await fs.readFile(AUTH_PATH, "utf8");
     const parsed = JSON.parse(raw) as AuthFile;
-    const t = parsed.tokens;
+    const t: AuthTokens = parsed.tokens ?? parsed;
     if (!t?.access_token) return null;
     return { accessToken: t.access_token, refreshToken: t.refresh_token, accountId: t.account_id };
   } catch {
@@ -58,10 +61,11 @@ async function writeAccessToken(accessToken: string): Promise<void> {
   try {
     existing = JSON.parse(await fs.readFile(AUTH_PATH, "utf8"));
   } catch {}
-  const merged: AuthFile = {
-    ...existing,
-    tokens: { ...(existing.tokens ?? {}), access_token: accessToken },
-  };
+  // Preserve whichever layout the file uses on disk.
+  const nested = existing.tokens !== undefined;
+  const merged: AuthFile = nested
+    ? { ...existing, tokens: { ...(existing.tokens ?? {}), access_token: accessToken } }
+    : { ...existing, access_token: accessToken };
   const tmp = `${AUTH_PATH}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(merged, null, 2), { mode: 0o600 });
   await fs.rename(tmp, AUTH_PATH);

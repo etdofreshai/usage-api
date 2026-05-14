@@ -4,9 +4,9 @@
  * backs off toward CEILING on errors / Retry-After hints.
  */
 
-const FLOOR = Number(process.env.POLL_FLOOR_SECONDS ?? 10);
-const TARGET = Number(process.env.POLL_TARGET_SECONDS ?? 30);
-const CEILING = Number(process.env.POLL_CEILING_SECONDS ?? 300);
+const FLOOR = Number(process.env.POLL_FLOOR_SECONDS ?? 60);
+const TARGET = Number(process.env.POLL_TARGET_SECONDS ?? 150);
+const CEILING = Number(process.env.POLL_CEILING_SECONDS ?? 600);
 
 export class RateLimitError extends Error {
   constructor(public retryAfterSec: number, message?: string) {

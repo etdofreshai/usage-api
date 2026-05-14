@@ -22,10 +22,10 @@ Returns per-provider:
 
 Each provider runs an independent `Poller`:
 
-- starts at `POLL_TARGET_SECONDS` (default 30s)
-- after 3 consecutive successes, walks toward `POLL_FLOOR_SECONDS` (10s)
+- starts at `POLL_TARGET_SECONDS` (default 2.5 min)
+- after 3 consecutive successes, walks toward `POLL_FLOOR_SECONDS` (1 min)
 - on 429: honors `Retry-After` (or doubles)
-- on other errors: doubles, capped at `POLL_CEILING_SECONDS` (5 min)
+- on other errors: doubles, capped at `POLL_CEILING_SECONDS` (10 min)
 
 ## Auth
 

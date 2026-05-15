@@ -37,10 +37,24 @@ interface AuthFile extends AuthTokens {
   tokens?: AuthTokens;
 }
 
+export interface CodexWindow {
+  used_percent: number;
+  resets_at: string | null;
+  window_minutes: number;
+}
+
+export interface CodexAdditionalLimit {
+  name: string;
+  metered_feature: string | null;
+  primary: CodexWindow;
+  secondary: CodexWindow;
+}
+
 export interface CodexUsage {
   plan_type: string | null;
-  primary: { used_percent: number; resets_at: string | null; window_minutes: number };
-  secondary: { used_percent: number; resets_at: string | null; window_minutes: number };
+  primary: CodexWindow;
+  secondary: CodexWindow;
+  additional: CodexAdditionalLimit[];
   credits_balance: string | null;
 }
 
@@ -119,23 +133,34 @@ export async function fetchCodexUsage(): Promise<CodexUsage> {
   if (!res.ok) {
     throw new Error(`codex usage HTTP ${res.status} ${await res.text().catch(() => "")}`);
   }
+  type RawWindow = { used_percent?: number; reset_at?: number; limit_window_seconds?: number } | undefined;
+  type RawRateLimit = { primary_window?: RawWindow; secondary_window?: RawWindow } | undefined;
   const json = (await res.json()) as {
     plan_type?: string;
-    rate_limit?: {
-      primary_window?: { used_percent?: number; reset_at?: number; limit_window_seconds?: number };
-      secondary_window?: { used_percent?: number; reset_at?: number; limit_window_seconds?: number };
-    };
+    rate_limit?: RawRateLimit;
+    additional_rate_limits?: Array<{
+      limit_name?: string;
+      metered_feature?: string;
+      rate_limit?: RawRateLimit;
+    }>;
     credits?: { unlimited?: boolean; balance?: string };
   };
-  const parseWin = (w: { used_percent?: number; reset_at?: number; limit_window_seconds?: number } | undefined) => ({
+  const parseWin = (w: RawWindow): CodexWindow => ({
     used_percent: w?.used_percent ?? 0,
     resets_at: w?.reset_at ? new Date(w.reset_at * 1000).toISOString() : null,
     window_minutes: w?.limit_window_seconds ? Math.round(w.limit_window_seconds / 60) : 0,
   });
+  const additional: CodexAdditionalLimit[] = (json.additional_rate_limits ?? []).map((a) => ({
+    name: a.limit_name ?? "unknown",
+    metered_feature: a.metered_feature ?? null,
+    primary: parseWin(a.rate_limit?.primary_window),
+    secondary: parseWin(a.rate_limit?.secondary_window),
+  }));
   return {
     plan_type: json.plan_type ?? null,
     primary: parseWin(json.rate_limit?.primary_window),
     secondary: parseWin(json.rate_limit?.secondary_window),
+    additional,
     credits_balance: json.credits?.unlimited ? "unlimited" : json.credits?.balance ?? null,
   };
 }

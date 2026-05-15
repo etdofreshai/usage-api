@@ -40,9 +40,18 @@ interface CredsFile {
   };
 }
 
+export interface ClaudeWindow {
+  utilization: number;
+  resets_at: string | null;
+}
+
 export interface ClaudeUsage {
-  five_hour: { utilization: number; resets_at: string | null };
-  seven_day: { utilization: number; resets_at: string | null };
+  five_hour: ClaudeWindow;
+  seven_day: ClaudeWindow;
+  seven_day_sonnet: ClaudeWindow | null;
+  seven_day_opus: ClaudeWindow | null;
+  // "Claude Design" in the web UI; the API ships it under the `omelette` codename.
+  seven_day_design: ClaudeWindow | null;
   subscription_type: string | null;
 }
 
@@ -149,19 +158,25 @@ export async function fetchClaudeUsage(): Promise<ClaudeUsage> {
   if (!res.ok) {
     throw new Error(`claude usage HTTP ${res.status} ${await res.text().catch(() => "")}`);
   }
+  type RawWindow = { utilization?: number; resets_at?: string } | null;
   const json = (await res.json()) as {
-    five_hour?: { utilization?: number; resets_at?: string };
-    seven_day?: { utilization?: number; resets_at?: string };
+    five_hour?: RawWindow;
+    seven_day?: RawWindow;
+    seven_day_sonnet?: RawWindow;
+    seven_day_opus?: RawWindow;
+    seven_day_omelette?: RawWindow;
   };
+  const win = (w: RawWindow): ClaudeWindow => ({
+    utilization: w?.utilization ?? 0,
+    resets_at: w?.resets_at ?? null,
+  });
+  const optWin = (w: RawWindow): ClaudeWindow | null => (w ? win(w) : null);
   return {
-    five_hour: {
-      utilization: json.five_hour?.utilization ?? 0,
-      resets_at: json.five_hour?.resets_at ?? null,
-    },
-    seven_day: {
-      utilization: json.seven_day?.utilization ?? 0,
-      resets_at: json.seven_day?.resets_at ?? null,
-    },
+    five_hour: win(json.five_hour ?? null),
+    seven_day: win(json.seven_day ?? null),
+    seven_day_sonnet: optWin(json.seven_day_sonnet ?? null),
+    seven_day_opus: optWin(json.seven_day_opus ?? null),
+    seven_day_design: optWin(json.seven_day_omelette ?? null),
     subscription_type: fresh.subscriptionType ?? null,
   };
 }

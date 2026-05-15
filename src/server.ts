@@ -75,12 +75,17 @@ const THIRTY_DAY_MS = 30 * 24 * 60 * 60 * 1000;
 function enrichClaude(snap: ReturnType<typeof claude.snapshot>) {
   if (!snap.data) return snap;
   const d = snap.data;
+  const enrichSeven = <T extends { utilization: number; resets_at: string | null } | null>(w: T): T =>
+    (w ? { ...w, ...pacing(w.utilization, w.resets_at, SEVEN_DAY_MS) } : w) as T;
   return {
     ...snap,
     data: {
       ...d,
       five_hour: { ...d.five_hour, ...pacing(d.five_hour.utilization, d.five_hour.resets_at, FIVE_HOUR_MS) },
       seven_day: { ...d.seven_day, ...pacing(d.seven_day.utilization, d.seven_day.resets_at, SEVEN_DAY_MS) },
+      seven_day_sonnet: enrichSeven(d.seven_day_sonnet),
+      seven_day_opus: enrichSeven(d.seven_day_opus),
+      seven_day_design: enrichSeven(d.seven_day_design),
     },
   };
 }
@@ -88,14 +93,21 @@ function enrichClaude(snap: ReturnType<typeof claude.snapshot>) {
 function enrichCodex(snap: ReturnType<typeof codex.snapshot>) {
   if (!snap.data) return snap;
   const d = snap.data;
-  const pMs = (d.primary.window_minutes || 300) * 60 * 1000;
-  const sMs = (d.secondary.window_minutes || 10080) * 60 * 1000;
+  const enrichWin = (w: { used_percent: number; resets_at: string | null; window_minutes: number }, fallbackMin: number) => {
+    const ms = (w.window_minutes || fallbackMin) * 60 * 1000;
+    return { ...w, ...pacing(w.used_percent, w.resets_at, ms) };
+  };
   return {
     ...snap,
     data: {
       ...d,
-      primary: { ...d.primary, ...pacing(d.primary.used_percent, d.primary.resets_at, pMs) },
-      secondary: { ...d.secondary, ...pacing(d.secondary.used_percent, d.secondary.resets_at, sMs) },
+      primary: enrichWin(d.primary, 300),
+      secondary: enrichWin(d.secondary, 10080),
+      additional: d.additional.map((a) => ({
+        ...a,
+        primary: enrichWin(a.primary, 300),
+        secondary: enrichWin(a.secondary, 10080),
+      })),
     },
   };
 }

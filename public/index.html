@@ -23,6 +23,17 @@
   header h1 { font-size: 16px; margin: 0; letter-spacing: 0.02em; }
   header .meta { color: var(--muted); font-size: 12px; }
   main { padding: 22px; display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; }
+  .history { margin: 22px 22px 0; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .history-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .history-title { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .history-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .history button, .history select { background: var(--panel-2); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 12px; }
+  .history button.active { border-color: var(--accent); color: var(--accent); }
+  .history svg { width: 100%; height: 220px; display: block; background: #0f1318; border: 1px solid var(--border); border-radius: 8px; }
+  .history .axis { stroke: var(--border); stroke-width: 1; }
+  .history .line { fill: none; stroke: var(--accent); stroke-width: 2; }
+  .history .point { fill: var(--accent); opacity: 0.85; }
+  .history .caption { color: var(--muted); font-size: 12px; margin-top: 8px; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
   .card h2 { margin: 0; padding: 12px 14px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
   .card h2 .stamp { font-weight: normal; font-size: 11px; text-transform: none; letter-spacing: 0; }
@@ -53,6 +64,21 @@
   <h1>usage-api</h1>
   <div class="meta"><span id="status">connecting…</span> · refreshes every <span id="every">3</span>s · last <span id="ts">—</span></div>
 </header>
+<section class="history">
+  <div class="history-head">
+    <div>
+      <div class="history-title">usage history</div>
+      <div class="caption" id="history-caption">daily view · waiting for samples</div>
+    </div>
+    <div class="history-controls">
+      <button type="button" data-granularity="daily" class="active">daily</button>
+      <button type="button" data-granularity="hourly">hourly</button>
+      <button type="button" data-granularity="fine">finest</button>
+      <select id="history-series" aria-label="history metric"></select>
+    </div>
+  </div>
+  <svg id="history-chart" viewBox="0 0 900 220" role="img" aria-label="usage history chart"></svg>
+</section>
 <main id="grid"></main>
 
 <script>
@@ -60,6 +86,11 @@ const REFRESH_MS = 3000;
 const grid = document.getElementById("grid");
 const statusEl = document.getElementById("status");
 const tsEl = document.getElementById("ts");
+const historyChart = document.getElementById("history-chart");
+const historyCaption = document.getElementById("history-caption");
+const historySeries = document.getElementById("history-series");
+let historyGranularity = "daily";
+let selectedSeries = "";
 document.getElementById("every").textContent = (REFRESH_MS / 1000).toFixed(0);
 
 function fmtPct(n) {
@@ -163,7 +194,7 @@ function renderRaw(snap) {
   if (!d) return `<div class="empty">no data yet</div>`;
   return `<details><summary>raw</summary><pre class="json">${escapeHtml(JSON.stringify(d, null, 2))}</pre></details>`;
 }
-function escapeHtml(s) { return s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+function escapeHtml(s) { return String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
 
 const RENDERERS = {
   claude: renderClaude,
@@ -196,6 +227,73 @@ function card(name, snap) {
   `;
 }
 
+async function fetchHistory() {
+  try {
+    const r = await fetch(`/api/history?granularity=${encodeURIComponent(historyGranularity)}`, { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    renderHistory(await r.json());
+  } catch (err) {
+    historyCaption.textContent = "history unavailable: " + (err?.message ?? err);
+  }
+}
+
+function seriesKey(series) {
+  return `${series.provider}:${series.metric}`;
+}
+
+function renderHistory(history) {
+  const series = history.series ?? [];
+  const previous = selectedSeries;
+  historySeries.innerHTML = series.map(s => `<option value="${escapeHtml(seriesKey(s))}">${escapeHtml(s.provider)} · ${escapeHtml(s.metric)}</option>`).join("");
+  selectedSeries = series.some(s => seriesKey(s) === previous) ? previous : (series[0] ? seriesKey(series[0]) : "");
+  historySeries.value = selectedSeries;
+
+  const selected = series.find(s => seriesKey(s) === selectedSeries);
+  if (!selected || selected.points.length === 0) {
+    historyChart.innerHTML = `<text x="450" y="110" text-anchor="middle" fill="#8a96a4">waiting for usage samples</text>`;
+    historyCaption.textContent = `${history.granularity ?? historyGranularity} view · stores last ${history.retentionDays ?? 8} days`;
+    return;
+  }
+
+  const points = selected.points;
+  const width = 900, height = 220, pad = 28;
+  const times = points.map(p => new Date(p.t).getTime());
+  const values = points.map(p => p.value);
+  const minT = Math.min(...times), maxT = Math.max(...times);
+  const minV = Math.max(0, Math.min(...values, 0));
+  const maxV = Math.min(100, Math.max(...values, 100));
+  const x = t => maxT === minT ? width / 2 : pad + ((t - minT) / (maxT - minT)) * (width - pad * 2);
+  const y = v => height - pad - ((v - minV) / Math.max(1, maxV - minV)) * (height - pad * 2);
+  const coords = points.map((p, i) => `${x(times[i]).toFixed(1)},${y(p.value).toFixed(1)}`).join(" ");
+  const dotEvery = Math.max(1, Math.ceil(points.length / 80));
+  const dots = points.filter((_p, i) => i % dotEvery === 0 || i === points.length - 1)
+    .map((p, i) => `<circle class="point" cx="${x(new Date(p.t).getTime()).toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="2"><title>${fmtTime(p.t)} · ${fmtPct(p.value)} · ${p.count} sample${p.count === 1 ? "" : "s"}</title></circle>`)
+    .join("");
+  historyChart.innerHTML = `
+    <line class="axis" x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}"></line>
+    <line class="axis" x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}"></line>
+    <text x="${pad}" y="18" fill="#8a96a4" font-size="11">100%</text>
+    <text x="${pad}" y="${height - 8}" fill="#8a96a4" font-size="11">0%</text>
+    <polyline class="line" points="${coords}"></polyline>
+    ${dots}
+  `;
+  const first = fmtTime(points[0].t);
+  const last = fmtTime(points[points.length - 1].t);
+  historyCaption.textContent = `${history.granularity} · ${selected.provider} ${selected.metric} · ${points.length} point${points.length === 1 ? "" : "s"} · ${first} → ${last}`;
+}
+
+historySeries.addEventListener("change", () => {
+  selectedSeries = historySeries.value;
+  fetchHistory();
+});
+document.querySelectorAll("[data-granularity]").forEach(button => {
+  button.addEventListener("click", () => {
+    historyGranularity = button.dataset.granularity;
+    document.querySelectorAll("[data-granularity]").forEach(b => b.classList.toggle("active", b === button));
+    fetchHistory();
+  });
+});
+
 async function tick() {
   try {
     const r = await fetch("/api/usage", { cache: "no-store" });
@@ -211,7 +309,9 @@ async function tick() {
 }
 
 tick();
+fetchHistory();
 setInterval(tick, REFRESH_MS);
+setInterval(fetchHistory, REFRESH_MS * 10);
 </script>
 </body>
 </html>

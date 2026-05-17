@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { Poller } from "./cache.js";
+import { HistoryGranularity, HistoryStore } from "./history.js";
 
 // Load env from the shared volume (same .env that ai-sessions uses) so secrets
 // live alongside the OAuth credentials instead of in Dokploy. Run before any
@@ -34,17 +35,25 @@ import { fetchOpenAiUsage } from "./providers/openai.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 3000);
+const HISTORY_RETENTION_MS = Number(process.env.USAGE_HISTORY_RETENTION_DAYS ?? 8) * 24 * 60 * 60 * 1000;
+const HISTORY_FILE = process.env.USAGE_HISTORY_FILE ?? "/home/node/workspace/usage-history.jsonl";
+const history = new HistoryStore({ retentionMs: HISTORY_RETENTION_MS, filePath: HISTORY_FILE });
+await history.load();
+
+function remember<T>(provider: string) {
+  return (data: T, fetchedAt: Date) => history.recordProvider(provider, data, fetchedAt);
+}
 
 // Accept the workspace .env's existing names as fallbacks.
 const ZAI_KEY = process.env.ZAI_API_KEY ?? process.env.ZAI_TOKEN;
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY ?? process.env.OPENROUTER_TOKEN;
 const OPENAI_KEY = process.env.OPENAI_ADMIN_KEY; // requires sk-admin-* — keep explicit
 
-const claude = new Poller("claude", fetchClaudeUsage);
-const codex = new Poller("codex", fetchCodexUsage);
-const zai = ZAI_KEY ? new Poller("zai", () => fetchZaiUsage(ZAI_KEY)) : null;
-const openrouter = OPENROUTER_KEY ? new Poller("openrouter", () => fetchOpenRouterUsage(OPENROUTER_KEY)) : null;
-const openai = OPENAI_KEY ? new Poller("openai", () => fetchOpenAiUsage(OPENAI_KEY)) : null;
+const claude = new Poller("claude", fetchClaudeUsage, remember("claude"));
+const codex = new Poller("codex", fetchCodexUsage, remember("codex"));
+const zai = ZAI_KEY ? new Poller("zai", () => fetchZaiUsage(ZAI_KEY), remember("zai")) : null;
+const openrouter = OPENROUTER_KEY ? new Poller("openrouter", () => fetchOpenRouterUsage(OPENROUTER_KEY), remember("openrouter")) : null;
+const openai = OPENAI_KEY ? new Poller("openai", () => fetchOpenAiUsage(OPENAI_KEY), remember("openai")) : null;
 
 claude.start();
 codex.start();
@@ -140,6 +149,14 @@ app.get("/api/usage", (_req, res) => {
       openai: openai?.snapshot() ?? { data: null, error: "OPENAI_ADMIN_KEY not set" },
     },
   });
+});
+
+app.get("/api/history", (req, res) => {
+  const requested = typeof req.query.granularity === "string" ? req.query.granularity : "daily";
+  const granularity: HistoryGranularity = requested === "fine" || requested === "hourly" || requested === "daily"
+    ? requested
+    : "daily";
+  res.json(history.toSeries(granularity));
 });
 
 // Serve the dashboard UI from /public.

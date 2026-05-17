@@ -34,7 +34,8 @@ export class Poller<T> {
 
   constructor(
     public readonly name: string,
-    private readonly fetcher: () => Promise<T>
+    private readonly fetcher: () => Promise<T>,
+    private readonly onSuccess?: (data: T, fetchedAt: Date) => void
   ) {}
 
   start() {
@@ -64,7 +65,9 @@ export class Poller<T> {
   private async tick() {
     try {
       this.data = await this.fetcher();
-      this.fetchedAt = new Date().toISOString();
+      const fetchedAt = new Date();
+      this.fetchedAt = fetchedAt.toISOString();
+      this.onSuccess?.(this.data, fetchedAt);
       this.error = null;
       this.successStreak++;
       // After 3 successful fetches, walk one step toward the floor.

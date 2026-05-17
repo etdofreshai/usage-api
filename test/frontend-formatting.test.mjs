@@ -56,6 +56,8 @@ test("history graph exposes all known provider series but defaults to common one
     { key: "claude:seven_day_design", label: "Claude Design 7-day", default: false },
     { key: "codex:primary", label: "Codex 5-hour", default: true },
     { key: "codex:secondary", label: "Codex 7-day", default: true },
+    { key: "codex:GPT-5.3-Codex-Spark primary", label: "Codex Spark 5-hour", default: false },
+    { key: "codex:GPT-5.3-Codex-Spark secondary", label: "Codex Spark 7-day", default: false },
     { key: "zai:five_hour", label: "ZAI 5-hour", default: true },
     { key: "zai:monthly", label: "ZAI monthly", default: false },
   ]);

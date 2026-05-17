@@ -70,3 +70,11 @@ test("history series menu supports bulk actions and localStorage persistence", (
   assert.match(html, /localStorage\.getItem\("usage-api:selected-history-series"\)/);
   assert.match(html, /localStorage\.setItem\("usage-api:selected-history-series"/);
 });
+
+test("history chart includes readable axes, range bars, and rolling-window help text", () => {
+  assert.match(html, /\[100, 75, 50, 25, 0\]/);
+  assert.match(html, /class="range"/);
+  assert.match(html, /class="grid-line"/);
+  assert.match(html, /Codex 7-day is a rolling window/);
+  assert.match(html, /Aggregated views show average dots plus min–max bars/);
+});

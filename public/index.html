@@ -77,10 +77,16 @@ function fmtRel(iso) {
   const ms = new Date(iso).getTime() - Date.now();
   if (!Number.isFinite(ms)) return "—";
   const abs = Math.abs(ms);
-  const m = Math.round(abs / 60000);
-  const h = Math.floor(m / 60);
-  const rem = m % 60;
-  const s = h ? `${h}h${rem ? " " + rem + "m" : ""}` : `${m}m`;
+  const totalMinutes = Math.round(abs / 60000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  let s;
+  if (days) {
+    s = `${days}d${hours ? " " + hours + "h" : ""}`;
+  } else {
+    s = hours ? `${hours}h${minutes ? " " + minutes + "m" : ""}` : `${minutes}m`;
+  }
   return ms >= 0 ? `in ${s}` : `${s} ago`;
 }
 function barClass(used, expected) {

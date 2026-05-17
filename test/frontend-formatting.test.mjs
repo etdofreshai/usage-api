@@ -73,6 +73,21 @@ test("history series menu supports bulk actions and localStorage persistence", (
   assert.match(html, /localStorage\.setItem\("usage-api:selected-history-series"/);
 });
 
+test("dashboard remembers selected view and history granularity", () => {
+  assert.match(html, /localStorage\.getItem\("usage-api:selected-view"\)/);
+  assert.match(html, /localStorage\.setItem\("usage-api:selected-view", view\)/);
+  assert.match(html, /localStorage\.getItem\("usage-api:history-granularity"\)/);
+  assert.match(html, /localStorage\.setItem\("usage-api:history-granularity", granularity\)/);
+  assert.match(html, /applySelectedView\(loadSelectedView\(\), \{ fetch: false \}\)/);
+  assert.match(html, /applyHistoryGranularity\(historyGranularity, \{ fetch: false \}\)/);
+});
+
+test("history chart colors dots and range bars with each series color", () => {
+  assert.match(html, /<polyline class="line" stroke="\$\{item\.color\}"/);
+  assert.match(html, /<circle class="point" fill="\$\{item\.color\}" stroke="\$\{item\.color\}"/);
+  assert.match(html, /<line class="range" stroke="\$\{item\.color\}"/);
+});
+
 test("history chart includes readable axes, range bars, and rolling-window help text", () => {
   assert.match(html, /\[100, 75, 50, 25, 0\]/);
   assert.match(html, /class="range"/);

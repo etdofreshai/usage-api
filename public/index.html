@@ -43,7 +43,7 @@
   .history .grid-line { stroke: var(--border); stroke-width: 1; opacity: 0.35; }
   .history .range { stroke-width: 6; stroke-linecap: round; opacity: 0.32; }
   .history .line { fill: none; stroke-width: 2; }
-  .history .point { fill: var(--accent); opacity: 0.9; stroke: #0f1318; stroke-width: 1.5; }
+  .history .point { opacity: 0.92; stroke-width: 1.5; }
   .history .caption { color: var(--muted); font-size: 12px; margin-top: 8px; }
   .history-note { color: var(--muted); font-size: 12px; margin-top: 8px; }
   .history-note strong { color: var(--fg); }
@@ -125,7 +125,7 @@ const CURATED_HISTORY_SERIES = [
   { key: "zai:five_hour", label: "ZAI 5-hour", color: "#a855f7", default: true },
   { key: "zai:monthly", label: "ZAI monthly", color: "#d8b4fe", default: false },
 ];
-let historyGranularity = "daily";
+let historyGranularity = loadHistoryGranularity();
 let selectedSeriesKeys = loadSelectedSeriesKeys();
 let latestHistory = null;
 document.getElementById("every").textContent = (REFRESH_MS / 1000).toFixed(0);
@@ -285,6 +285,51 @@ function allSeriesKeys() {
   return CURATED_HISTORY_SERIES.map(option => option.key);
 }
 
+function loadSelectedView() {
+  try {
+    const view = localStorage.getItem("usage-api:selected-view");
+    if (view === "cards" || view === "history") return view;
+  } catch {}
+  return "cards";
+}
+
+function saveSelectedView(view) {
+  localStorage.setItem("usage-api:selected-view", view);
+}
+
+function loadHistoryGranularity() {
+  try {
+    const granularity = localStorage.getItem("usage-api:history-granularity");
+    if (granularity === "daily" || granularity === "hourly" || granularity === "fine") return granularity;
+  } catch {}
+  return "daily";
+}
+
+function saveHistoryGranularity(granularity) {
+  localStorage.setItem("usage-api:history-granularity", granularity);
+}
+
+function applySelectedView(view, options = {}) {
+  const shouldFetch = options.fetch ?? true;
+  document.querySelectorAll("[data-view]").forEach(button => {
+    button.classList.toggle("active", button.dataset.view === view);
+  });
+  grid.classList.toggle("hidden", view !== "cards");
+  document.querySelector(".history").classList.toggle("hidden", view !== "history");
+  saveSelectedView(view);
+  if (view === "history" && shouldFetch) fetchHistory();
+}
+
+function applyHistoryGranularity(granularity, options = {}) {
+  const shouldFetch = options.fetch ?? true;
+  historyGranularity = granularity;
+  document.querySelectorAll("[data-granularity]").forEach(button => {
+    button.classList.toggle("active", button.dataset.granularity === granularity);
+  });
+  saveHistoryGranularity(granularity);
+  if (shouldFetch) fetchHistory();
+}
+
 function loadSelectedSeriesKeys() {
   try {
     const raw = localStorage.getItem("usage-api:selected-history-series");
@@ -355,7 +400,7 @@ function renderHistory(history) {
       .filter((_p, i) => i % dotEvery === 0 || i === item.series.points.length - 1)
       .map(p => {
         const cx = x(new Date(p.t).getTime()) + offset;
-        return `<circle class="point" fill="${item.color}" cx="${cx.toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="3"><title>${escapeHtml(item.label)} · ${fmtTime(p.t)} · avg ${fmtPct(p.value)} · range ${fmtPct(p.min)}–${fmtPct(p.max)} · ${p.count} sample${p.count === 1 ? "" : "s"}</title></circle>`;
+        return `<circle class="point" fill="${item.color}" stroke="${item.color}" cx="${cx.toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="3"><title>${escapeHtml(item.label)} · ${fmtTime(p.t)} · avg ${fmtPct(p.value)} · range ${fmtPct(p.min)}–${fmtPct(p.max)} · ${p.count} sample${p.count === 1 ? "" : "s"}</title></circle>`;
       })
       .join("");
     return `${ranges}<polyline class="line" stroke="${item.color}" points="${coords}"></polyline>${dots}`;
@@ -420,21 +465,13 @@ historySeriesMenu.addEventListener("click", (event) => {
   else renderSeriesMenu();
 });
 document.querySelectorAll("[data-view]").forEach(button => {
-  button.addEventListener("click", () => {
-    const view = button.dataset.view;
-    document.querySelectorAll("[data-view]").forEach(b => b.classList.toggle("active", b === button));
-    grid.classList.toggle("hidden", view !== "cards");
-    document.querySelector(".history").classList.toggle("hidden", view !== "history");
-    if (view === "history") fetchHistory();
-  });
+  button.addEventListener("click", () => applySelectedView(button.dataset.view));
 });
 document.querySelectorAll("[data-granularity]").forEach(button => {
-  button.addEventListener("click", () => {
-    historyGranularity = button.dataset.granularity;
-    document.querySelectorAll("[data-granularity]").forEach(b => b.classList.toggle("active", b === button));
-    fetchHistory();
-  });
+  button.addEventListener("click", () => applyHistoryGranularity(button.dataset.granularity));
 });
+applyHistoryGranularity(historyGranularity, { fetch: false });
+applySelectedView(loadSelectedView(), { fetch: false });
 renderSeriesMenu();
 
 async function tick() {

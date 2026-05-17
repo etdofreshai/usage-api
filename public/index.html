@@ -113,17 +113,17 @@ const historySeriesToggle = document.getElementById("history-series-toggle");
 const historySeriesMenu = document.getElementById("history-series-menu");
 const HISTORY_SERIES_STORAGE_KEY = "usage-api:selected-history-series";
 const CURATED_HISTORY_SERIES = [
-  { key: "claude:five_hour", label: "Claude 5-hour", color: "#5cc8ff", default: true },
-  { key: "claude:seven_day", label: "Claude 7-day", color: "#6ee7a0", default: true },
-  { key: "claude:seven_day_sonnet", label: "Claude Sonnet 7-day", color: "#34d399", default: false },
-  { key: "claude:seven_day_opus", label: "Claude Opus 7-day", color: "#f472b6", default: false },
-  { key: "claude:seven_day_design", label: "Claude Design 7-day", color: "#a78bfa", default: false },
-  { key: "codex:primary", label: "Codex 5-hour", color: "#ffcc66", default: true },
-  { key: "codex:secondary", label: "Codex 7-day", color: "#ff8f5c", default: true },
-  { key: "codex:GPT-5.3-Codex-Spark primary", label: "Codex Spark 5-hour", color: "#f59e0b", default: false },
-  { key: "codex:GPT-5.3-Codex-Spark secondary", label: "Codex Spark 7-day", color: "#fb7185", default: false },
-  { key: "zai:five_hour", label: "ZAI 5-hour", color: "#c084fc", default: true },
-  { key: "zai:monthly", label: "ZAI monthly", color: "#facc15", default: false },
+  { key: "claude:five_hour", label: "Claude Code 5-hour", color: "#f97316", default: true },
+  { key: "claude:seven_day", label: "Claude Code 7-day", color: "#fb923c", default: true },
+  { key: "claude:seven_day_sonnet", label: "Claude Sonnet 7-day", color: "#fdba74", default: false },
+  { key: "claude:seven_day_opus", label: "Claude Opus 7-day", color: "#ea580c", default: false },
+  { key: "claude:seven_day_design", label: "Claude Design 7-day", color: "#fed7aa", default: false },
+  { key: "codex:primary", label: "Codex 5-hour", color: "#22c55e", default: true },
+  { key: "codex:secondary", label: "Codex 7-day", color: "#86efac", default: true },
+  { key: "codex:GPT-5.3-Codex-Spark primary", label: "Codex Spark 5-hour", color: "#06b6d4", default: false },
+  { key: "codex:GPT-5.3-Codex-Spark secondary", label: "Codex Spark 7-day", color: "#67e8f9", default: false },
+  { key: "zai:five_hour", label: "ZAI 5-hour", color: "#a855f7", default: true },
+  { key: "zai:monthly", label: "ZAI monthly", color: "#d8b4fe", default: false },
 ];
 let historyGranularity = "daily";
 let selectedSeriesKeys = loadSelectedSeriesKeys();

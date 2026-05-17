@@ -44,22 +44,22 @@ test("dashboard defaults to cards with a tab for switching to history graph", ()
   assert.match(html, /<section class="history view hidden">/);
 });
 
-test("history graph exposes all known provider series but defaults to common ones", () => {
-  const options = [...html.matchAll(/\{ key: "([^"]+)", label: "([^"]+)", color: "#[0-9a-fA-F]+", default: (true|false) \}/g)]
-    .map((match) => ({ key: match[1], label: match[2], default: match[3] === "true" }));
+test("history graph exposes all known provider series with preferred color families", () => {
+  const options = [...html.matchAll(/\{ key: "([^"]+)", label: "([^"]+)", color: "(#[0-9a-fA-F]+)", default: (true|false) \}/g)]
+    .map((match) => ({ key: match[1], label: match[2], color: match[3], default: match[4] === "true" }));
 
   assert.deepEqual(options, [
-    { key: "claude:five_hour", label: "Claude 5-hour", default: true },
-    { key: "claude:seven_day", label: "Claude 7-day", default: true },
-    { key: "claude:seven_day_sonnet", label: "Claude Sonnet 7-day", default: false },
-    { key: "claude:seven_day_opus", label: "Claude Opus 7-day", default: false },
-    { key: "claude:seven_day_design", label: "Claude Design 7-day", default: false },
-    { key: "codex:primary", label: "Codex 5-hour", default: true },
-    { key: "codex:secondary", label: "Codex 7-day", default: true },
-    { key: "codex:GPT-5.3-Codex-Spark primary", label: "Codex Spark 5-hour", default: false },
-    { key: "codex:GPT-5.3-Codex-Spark secondary", label: "Codex Spark 7-day", default: false },
-    { key: "zai:five_hour", label: "ZAI 5-hour", default: true },
-    { key: "zai:monthly", label: "ZAI monthly", default: false },
+    { key: "claude:five_hour", label: "Claude Code 5-hour", color: "#f97316", default: true },
+    { key: "claude:seven_day", label: "Claude Code 7-day", color: "#fb923c", default: true },
+    { key: "claude:seven_day_sonnet", label: "Claude Sonnet 7-day", color: "#fdba74", default: false },
+    { key: "claude:seven_day_opus", label: "Claude Opus 7-day", color: "#ea580c", default: false },
+    { key: "claude:seven_day_design", label: "Claude Design 7-day", color: "#fed7aa", default: false },
+    { key: "codex:primary", label: "Codex 5-hour", color: "#22c55e", default: true },
+    { key: "codex:secondary", label: "Codex 7-day", color: "#86efac", default: true },
+    { key: "codex:GPT-5.3-Codex-Spark primary", label: "Codex Spark 5-hour", color: "#06b6d4", default: false },
+    { key: "codex:GPT-5.3-Codex-Spark secondary", label: "Codex Spark 7-day", color: "#67e8f9", default: false },
+    { key: "zai:five_hour", label: "ZAI 5-hour", color: "#a855f7", default: true },
+    { key: "zai:monthly", label: "ZAI monthly", color: "#d8b4fe", default: false },
   ]);
   assert.match(html, /id="history-series-menu"/);
   assert.match(html, /selectedSeriesKeys\.has/);

@@ -37,6 +37,7 @@
   .series-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 10; min-width: 180px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px; box-shadow: 0 12px 36px rgba(0,0,0,0.35); }
   .series-menu.hidden { display: none; }
   .series-menu button { display: block; width: 100%; text-align: left; margin: 2px 0; }
+  .series-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
   .history svg { width: 100%; height: 260px; display: block; background: #0f1318; border: 1px solid var(--border); border-radius: 8px; }
   .history .axis { stroke: var(--border); stroke-width: 1; }
   .history .line { fill: none; stroke-width: 2; }
@@ -105,15 +106,20 @@ const historyChart = document.getElementById("history-chart");
 const historyCaption = document.getElementById("history-caption");
 const historySeriesToggle = document.getElementById("history-series-toggle");
 const historySeriesMenu = document.getElementById("history-series-menu");
+const HISTORY_SERIES_STORAGE_KEY = "usage-api:selected-history-series";
 const CURATED_HISTORY_SERIES = [
-  { key: "claude:five_hour", label: "Claude 5-hour", color: "#5cc8ff" },
-  { key: "claude:seven_day", label: "Claude 7-day", color: "#6ee7a0" },
-  { key: "codex:primary", label: "Codex 5-hour", color: "#ffcc66" },
-  { key: "codex:secondary", label: "Codex 7-day", color: "#ff8f5c" },
-  { key: "zai:five_hour", label: "ZAI 5-hour", color: "#c084fc" },
+  { key: "claude:five_hour", label: "Claude 5-hour", color: "#5cc8ff", default: true },
+  { key: "claude:seven_day", label: "Claude 7-day", color: "#6ee7a0", default: true },
+  { key: "claude:seven_day_sonnet", label: "Claude Sonnet 7-day", color: "#34d399", default: false },
+  { key: "claude:seven_day_opus", label: "Claude Opus 7-day", color: "#f472b6", default: false },
+  { key: "claude:seven_day_design", label: "Claude Design 7-day", color: "#a78bfa", default: false },
+  { key: "codex:primary", label: "Codex 5-hour", color: "#ffcc66", default: true },
+  { key: "codex:secondary", label: "Codex 7-day", color: "#ff8f5c", default: true },
+  { key: "zai:five_hour", label: "ZAI 5-hour", color: "#c084fc", default: true },
+  { key: "zai:monthly", label: "ZAI monthly", color: "#facc15", default: false },
 ];
 let historyGranularity = "daily";
-let selectedSeriesKeys = new Set(CURATED_HISTORY_SERIES.map(s => s.key));
+let selectedSeriesKeys = loadSelectedSeriesKeys();
 let latestHistory = null;
 document.getElementById("every").textContent = (REFRESH_MS / 1000).toFixed(0);
 
@@ -264,6 +270,36 @@ async function fetchHistory() {
 function seriesKey(series) {
   return `${series.provider}:${series.metric}`;
 }
+function defaultSeriesKeys() {
+  return CURATED_HISTORY_SERIES.filter(option => option.default).map(option => option.key);
+}
+
+function allSeriesKeys() {
+  return CURATED_HISTORY_SERIES.map(option => option.key);
+}
+
+function loadSelectedSeriesKeys() {
+  try {
+    const raw = localStorage.getItem("usage-api:selected-history-series");
+    if (raw) {
+      const parsed = JSON.parse(raw).filter(key => allSeriesKeys().includes(key));
+      if (parsed.length > 0) return new Set(parsed);
+    }
+  } catch {}
+  return new Set(defaultSeriesKeys());
+}
+
+function saveSelectedSeriesKeys() {
+  localStorage.setItem("usage-api:selected-history-series", JSON.stringify([...selectedSeriesKeys]));
+}
+
+function setSelectedSeriesKeys(keys) {
+  selectedSeriesKeys = new Set(keys);
+  saveSelectedSeriesKeys();
+  if (latestHistory) renderHistory(latestHistory);
+  else renderSeriesMenu();
+}
+
 
 function renderHistory(history) {
   latestHistory = history;
@@ -318,10 +354,18 @@ function renderHistory(history) {
 
 function renderSeriesMenu() {
   historySeriesToggle.textContent = `series (${selectedSeriesKeys.size}) ▾`;
-  historySeriesMenu.innerHTML = CURATED_HISTORY_SERIES.map(option => {
+  const actions = `
+    <div class="series-actions">
+      <button type="button" data-series-action="all">all</button>
+      <button type="button" data-series-action="none">none</button>
+      <button type="button" data-series-action="default">default</button>
+    </div>
+  `;
+  const options = CURATED_HISTORY_SERIES.map(option => {
     const checked = selectedSeriesKeys.has(option.key);
     return `<button type="button" class="${checked ? "checked" : ""}" data-series-key="${escapeHtml(option.key)}"><span style="color:${option.color}">●</span> ${checked ? "✓" : "＋"} ${escapeHtml(option.label)}</button>`;
   }).join("");
+  historySeriesMenu.innerHTML = actions + options;
 }
 
 function toggleSeriesMenu() {
@@ -331,13 +375,22 @@ function toggleSeriesMenu() {
 
 historySeriesToggle.addEventListener("click", toggleSeriesMenu);
 historySeriesMenu.addEventListener("click", (event) => {
+  const actionButton = event.target.closest("[data-series-action]");
+  if (actionButton) {
+    const action = actionButton.dataset.seriesAction;
+    if (action === "all") setSelectedSeriesKeys(allSeriesKeys());
+    if (action === "none") setSelectedSeriesKeys([]);
+    if (action === "default") setSelectedSeriesKeys(defaultSeriesKeys());
+    return;
+  }
   const button = event.target.closest("[data-series-key]");
   if (!button) return;
   const key = button.dataset.seriesKey;
   if (selectedSeriesKeys.has(key)) selectedSeriesKeys.delete(key);
   else selectedSeriesKeys.add(key);
-  if (selectedSeriesKeys.size === 0) selectedSeriesKeys.add(key);
+  saveSelectedSeriesKeys();
   if (latestHistory) renderHistory(latestHistory);
+  else renderSeriesMenu();
 });
 document.querySelectorAll("[data-view]").forEach(button => {
   button.addEventListener("click", () => {

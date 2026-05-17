@@ -44,17 +44,29 @@ test("dashboard defaults to cards with a tab for switching to history graph", ()
   assert.match(html, /<section class="history view hidden">/);
 });
 
-test("history graph exposes curated multi-toggle provider options", () => {
-  const options = [...html.matchAll(/\{ key: "([^"]+)", label: "([^"]+)", color: "#[0-9a-fA-F]+" \}/g)]
-    .map((match) => ({ key: match[1], label: match[2] }));
+test("history graph exposes all known provider series but defaults to common ones", () => {
+  const options = [...html.matchAll(/\{ key: "([^"]+)", label: "([^"]+)", color: "#[0-9a-fA-F]+", default: (true|false) \}/g)]
+    .map((match) => ({ key: match[1], label: match[2], default: match[3] === "true" }));
 
   assert.deepEqual(options, [
-    { key: "claude:five_hour", label: "Claude 5-hour" },
-    { key: "claude:seven_day", label: "Claude 7-day" },
-    { key: "codex:primary", label: "Codex 5-hour" },
-    { key: "codex:secondary", label: "Codex 7-day" },
-    { key: "zai:five_hour", label: "ZAI 5-hour" },
+    { key: "claude:five_hour", label: "Claude 5-hour", default: true },
+    { key: "claude:seven_day", label: "Claude 7-day", default: true },
+    { key: "claude:seven_day_sonnet", label: "Claude Sonnet 7-day", default: false },
+    { key: "claude:seven_day_opus", label: "Claude Opus 7-day", default: false },
+    { key: "claude:seven_day_design", label: "Claude Design 7-day", default: false },
+    { key: "codex:primary", label: "Codex 5-hour", default: true },
+    { key: "codex:secondary", label: "Codex 7-day", default: true },
+    { key: "zai:five_hour", label: "ZAI 5-hour", default: true },
+    { key: "zai:monthly", label: "ZAI monthly", default: false },
   ]);
   assert.match(html, /id="history-series-menu"/);
   assert.match(html, /selectedSeriesKeys\.has/);
+});
+
+test("history series menu supports bulk actions and localStorage persistence", () => {
+  assert.match(html, /data-series-action="all"/);
+  assert.match(html, /data-series-action="none"/);
+  assert.match(html, /data-series-action="default"/);
+  assert.match(html, /localStorage\.getItem\("usage-api:selected-history-series"\)/);
+  assert.match(html, /localStorage\.setItem\("usage-api:selected-history-series"/);
 });

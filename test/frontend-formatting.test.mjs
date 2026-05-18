@@ -87,6 +87,9 @@ test("history chart colors dots and range bars with each series color", () => {
   assert.match(html, /<polyline class="expected-line" stroke="#fff"/);
   assert.match(html, /expectedCoords/);
   assert.match(html, /expected usage/);
+  assert.match(html, /currentExpectedForSeries\(item\.key\)/);
+  assert.match(html, /const expectedValue = p\.expectedValue \?\? fallbackExpected/);
+  assert.match(html, /if \(latestHistory\) renderHistory\(latestHistory\)/);
   assert.match(html, /<circle class="point" fill="\$\{item\.color\}" stroke="\$\{item\.color\}"/);
   assert.match(html, /<line class="range" stroke="\$\{item\.color\}"/);
 });

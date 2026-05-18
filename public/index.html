@@ -43,7 +43,7 @@
   .history .grid-line { stroke: var(--border); stroke-width: 1; opacity: 0.35; }
   .history .range { stroke-width: 6; stroke-linecap: round; opacity: 0.32; }
   .history .line { fill: none; stroke-width: 2; }
-  .history .expected-line { fill: none; stroke-width: 1.6; stroke-dasharray: 5 5; opacity: 0.9; }
+  .history .expected-line { fill: none; stroke-width: 1.6; stroke-dasharray: 5 5; opacity: 0.72; }
   .history .point { opacity: 0.92; stroke-width: 1.5; cursor: crosshair; }
   .history-tooltip { position: fixed; z-index: 50; max-width: 260px; pointer-events: none; background: rgba(20, 24, 29, 0.96); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.35; box-shadow: 0 12px 36px rgba(0,0,0,0.4); white-space: pre-line; }
   .history-tooltip.hidden { display: none; }
@@ -427,7 +427,7 @@ function renderHistory(history) {
       .map(p => `${(x(new Date(p.t).getTime()) + offset).toFixed(1)},${y(p.expectedValue).toFixed(1)}`)
       .join(" ");
     const expectedLine = expectedCoords
-      ? `<polyline class="expected-line" stroke="#fff" points="${expectedCoords}"><title>${escapeHtml(item.label)} expected usage</title></polyline>`
+      ? `<polyline class="expected-line" stroke="${item.color}" points="${expectedCoords}"><title>${escapeHtml(item.label)} expected usage</title></polyline>`
       : "";
     const dots = item.series.points
       .filter((_p, i) => i % dotEvery === 0 || i === item.series.points.length - 1)

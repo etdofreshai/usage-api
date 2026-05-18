@@ -43,6 +43,7 @@
   .history .grid-line { stroke: var(--border); stroke-width: 1; opacity: 0.35; }
   .history .range { stroke-width: 6; stroke-linecap: round; opacity: 0.32; }
   .history .line { fill: none; stroke-width: 2; }
+  .history .expected-line { fill: none; stroke-width: 1.6; stroke-dasharray: 5 5; opacity: 0.9; }
   .history .point { opacity: 0.92; stroke-width: 1.5; cursor: crosshair; }
   .history-tooltip { position: fixed; z-index: 50; max-width: 260px; pointer-events: none; background: rgba(20, 24, 29, 0.96); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.35; box-shadow: 0 12px 36px rgba(0,0,0,0.4); white-space: pre-line; }
   .history-tooltip.hidden { display: none; }
@@ -400,15 +401,23 @@ function renderHistory(history) {
       })
       .join("");
     const dotEvery = Math.max(1, Math.ceil(item.series.points.length / 50));
-        const dots = item.series.points
+    const expectedCoords = item.series.points
+      .filter(p => p.expectedValue != null && Number.isFinite(p.expectedValue))
+      .map(p => `${(x(new Date(p.t).getTime()) + offset).toFixed(1)},${y(p.expectedValue).toFixed(1)}`)
+      .join(" ");
+    const expectedLine = expectedCoords
+      ? `<polyline class="expected-line" stroke="#fff" points="${expectedCoords}"><title>${escapeHtml(item.label)} expected usage</title></polyline>`
+      : "";
+    const dots = item.series.points
       .filter((_p, i) => i % dotEvery === 0 || i === item.series.points.length - 1)
       .map(p => {
         const cx = x(new Date(p.t).getTime()) + offset;
-        const tooltip = `${item.label}\n${fmtTime(p.t)}\naverage ${fmtPct(p.value)}\nrange ${fmtPct(p.min)}–${fmtPct(p.max)}\n${p.count} sample${p.count === 1 ? "" : "s"}`;
+        const expectedText = p.expectedValue == null ? "" : `\nexpected ${fmtPct(p.expectedValue)}`;
+        const tooltip = `${item.label}\n${fmtTime(p.t)}\naverage ${fmtPct(p.value)}${expectedText}\nrange ${fmtPct(p.min)}–${fmtPct(p.max)}\n${p.count} sample${p.count === 1 ? "" : "s"}`;
         return `<circle class="point" fill="${item.color}" stroke="${item.color}" cx="${cx.toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="3" tabindex="0" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}"><title>${escapeHtml(tooltip)}</title></circle>`;
       })
       .join("");
-    return `${ranges}<polyline class="line" stroke="${item.color}" points="${coords}"></polyline>${dots}`;
+    return `${ranges}${expectedLine}<polyline class="line" stroke="${item.color}" points="${coords}"></polyline>${dots}`;
   }).join("");
   const legend = selected.map((item, i) => `
     <g transform="translate(${padLeft + (i % 3) * 250},${14 + Math.floor(i / 3) * 16})">

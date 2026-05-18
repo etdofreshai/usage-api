@@ -6,6 +6,7 @@ export type HistoryGranularity = "fine" | "hourly" | "daily";
 export interface UsageMetric {
   metric: string;
   value: number;
+  expectedValue?: number;
   resetIso?: string | null;
 }
 
@@ -18,6 +19,7 @@ export interface HistoryRecord {
 export interface SeriesPoint {
   t: string;
   value: number;
+  expectedValue?: number;
   min: number;
   max: number;
   count: number;
@@ -43,6 +45,8 @@ interface HistoryStoreOptions {
 
 interface BucketAccumulator {
   sum: number;
+  expectedSum: number;
+  expectedCount: number;
   min: number;
   max: number;
   count: number;
@@ -73,9 +77,11 @@ export function extractUsageMetrics(data: unknown): UsageMetric[] {
     const rawPercent = value.used_percent ?? value.utilization;
     if (typeof rawPercent === "number" && Number.isFinite(rawPercent)) {
       const reset = value.resets_at;
+      const expected = value.expected_percent;
       metrics.push({
         metric: displayPath(pathParts),
         value: Math.max(0, Math.min(100, rawPercent)),
+        ...(typeof expected === "number" && Number.isFinite(expected) ? { expectedValue: Math.max(0, Math.min(100, expected)) } : {}),
         resetIso: typeof reset === "string" ? reset : null,
       });
     }
@@ -178,7 +184,14 @@ export class HistoryStore {
           entry = { provider: record.provider, metric: metric.metric, points: [] };
           grouped.set(key, entry);
         }
-        entry.points.push({ t: record.ts, value: round(metric.value), min: round(metric.value), max: round(metric.value), count: 1 });
+        entry.points.push({
+          t: record.ts,
+          value: round(metric.value),
+          ...(metric.expectedValue === undefined ? {} : { expectedValue: round(metric.expectedValue) }),
+          min: round(metric.value),
+          max: round(metric.value),
+          count: 1,
+        });
       }
     }
     return sortSeries([...grouped.values()]);
@@ -199,8 +212,12 @@ export class HistoryStore {
           entry = { provider: record.provider, metric: metric.metric, buckets: new Map() };
           grouped.set(key, entry);
         }
-        const bucket = entry.buckets.get(bucketStart) ?? { sum: 0, min: metric.value, max: metric.value, count: 0 };
+        const bucket = entry.buckets.get(bucketStart) ?? { sum: 0, expectedSum: 0, expectedCount: 0, min: metric.value, max: metric.value, count: 0 };
         bucket.sum += metric.value;
+        if (metric.expectedValue !== undefined) {
+          bucket.expectedSum += metric.expectedValue;
+          bucket.expectedCount++;
+        }
         bucket.min = Math.min(bucket.min, metric.value);
         bucket.max = Math.max(bucket.max, metric.value);
         bucket.count++;
@@ -216,6 +233,7 @@ export class HistoryStore {
         .map(([t, bucket]) => ({
           t,
           value: round(bucket.sum / bucket.count),
+          ...(bucket.expectedCount === 0 ? {} : { expectedValue: round(bucket.expectedSum / bucket.expectedCount) }),
           min: round(bucket.min),
           max: round(bucket.max),
           count: bucket.count,

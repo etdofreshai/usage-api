@@ -84,6 +84,9 @@ test("dashboard remembers selected view and history granularity", () => {
 
 test("history chart colors dots and range bars with each series color", () => {
   assert.match(html, /<polyline class="line" stroke="\$\{item\.color\}"/);
+  assert.match(html, /<polyline class="expected-line" stroke="#fff"/);
+  assert.match(html, /expectedCoords/);
+  assert.match(html, /expected usage/);
   assert.match(html, /<circle class="point" fill="\$\{item\.color\}" stroke="\$\{item\.color\}"/);
   assert.match(html, /<line class="range" stroke="\$\{item\.color\}"/);
 });

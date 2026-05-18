@@ -4,15 +4,28 @@ import { HistoryStore, extractUsageMetrics } from "../src/history.ts";
 
 test("extractUsageMetrics finds percentage windows without token details", () => {
   const metrics = extractUsageMetrics({
-    five_hour: { utilization: 12.5, resets_at: "2026-01-01T05:00:00.000Z" },
-    monthly: { used_percent: 34.25, resets_at: "2026-02-01T00:00:00.000Z" },
+    five_hour: { utilization: 12.5, expected_percent: 20, resets_at: "2026-01-01T05:00:00.000Z" },
+    monthly: { used_percent: 34.25, expected_percent: 50.5, resets_at: "2026-02-01T00:00:00.000Z" },
     ignored: { current: 10, limit: 20 },
   });
 
   assert.deepEqual(metrics, [
-    { metric: "five_hour", value: 12.5, resetIso: "2026-01-01T05:00:00.000Z" },
-    { metric: "monthly", value: 34.25, resetIso: "2026-02-01T00:00:00.000Z" },
+    { metric: "five_hour", value: 12.5, expectedValue: 20, resetIso: "2026-01-01T05:00:00.000Z" },
+    { metric: "monthly", value: 34.25, expectedValue: 50.5, resetIso: "2026-02-01T00:00:00.000Z" },
   ]);
+});
+
+test("HistoryStore includes expected usage percentage in fine and aggregate graph points", () => {
+  const store = new HistoryStore({ retentionMs: 8 * 24 * 60 * 60 * 1000 });
+
+  store.recordProvider("codex", { primary: { used_percent: 10, expected_percent: 20, resets_at: null } }, new Date("2026-01-02T01:10:00.000Z"));
+  store.recordProvider("codex", { primary: { used_percent: 20, expected_percent: 30, resets_at: null } }, new Date("2026-01-02T01:40:00.000Z"));
+
+  const fine = store.toSeries("fine");
+  const hourly = store.toSeries("hourly");
+
+  assert.deepEqual(fine.series[0].points.map((p) => p.expectedValue), [20, 30]);
+  assert.deepEqual(hourly.series[0].points.map((p) => p.expectedValue), [25]);
 });
 
 test("HistoryStore retains only the last eight days of refresh samples", () => {

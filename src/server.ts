@@ -35,7 +35,12 @@ import { fetchOpenAiUsage } from "./providers/openai.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 3000);
-const HISTORY_RETENTION_MS = Number(process.env.USAGE_HISTORY_RETENTION_DAYS ?? 8) * 24 * 60 * 60 * 1000;
+function parseHistoryRetentionMs(value: string | undefined) {
+  if (value == null || value === "" || value === "forever" || value === "infinite" || value === "0") return Infinity;
+  const days = Number(value);
+  return Number.isFinite(days) && days > 0 ? days * 24 * 60 * 60 * 1000 : Infinity;
+}
+const HISTORY_RETENTION_MS = parseHistoryRetentionMs(process.env.USAGE_HISTORY_RETENTION_DAYS);
 const HISTORY_FILE = process.env.USAGE_HISTORY_FILE ?? "/home/node/workspace/usage-history.jsonl";
 const history = new HistoryStore({ retentionMs: HISTORY_RETENTION_MS, filePath: HISTORY_FILE });
 await history.load();

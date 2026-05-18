@@ -387,7 +387,8 @@ function renderHistory(history) {
 
   if (selected.length === 0) {
     historyChart.innerHTML = `<text x="450" y="130" text-anchor="middle" fill="#8a96a4">waiting for selected usage samples</text>`;
-    historyCaption.textContent = `${history.granularity ?? historyGranularity} view · stores last ${history.retentionDays ?? 8} days`;
+    const retentionText = history.retentionDays == null ? "keeps history indefinitely" : `stores last ${history.retentionDays} days`;
+    historyCaption.textContent = `${history.granularity ?? historyGranularity} view · ${retentionText}`;
     return;
   }
 

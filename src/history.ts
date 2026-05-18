@@ -34,12 +34,12 @@ export interface MetricSeries {
 export interface HistorySeriesResponse {
   granularity: HistoryGranularity;
   generatedAt: string;
-  retentionDays: number;
+  retentionDays: number | null;
   series: MetricSeries[];
 }
 
 interface HistoryStoreOptions {
-  retentionMs?: number;
+  retentionMs?: number | null;
   filePath?: string | null;
 }
 
@@ -52,7 +52,7 @@ interface BucketAccumulator {
   count: number;
 }
 
-const DEFAULT_RETENTION_MS = 8 * 24 * 60 * 60 * 1000;
+const DEFAULT_RETENTION_MS = Infinity;
 const MAX_DEPTH = 8;
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -116,6 +116,7 @@ export class HistoryStore {
   }
 
   get retentionDays() {
+    if (!Number.isFinite(this.retentionMs)) return null;
     return Math.round(this.retentionMs / (24 * 60 * 60 * 1000));
   }
 
@@ -170,6 +171,7 @@ export class HistoryStore {
   }
 
   private prune(nowMs = Date.now()) {
+    if (!Number.isFinite(this.retentionMs)) return;
     const cutoff = nowMs - this.retentionMs;
     this.records = this.records.filter((record) => Date.parse(record.ts) >= cutoff);
   }

@@ -41,6 +41,18 @@ test("HistoryStore retains only the last eight days of refresh samples", () => {
   assert.deepEqual(fine.series[0].points.map((p) => p.value), [2, 3]);
 });
 
+test("HistoryStore keeps usage samples indefinitely by default", () => {
+  const store = new HistoryStore();
+
+  store.recordProvider("claude", { five_hour: { utilization: 1, resets_at: null } }, new Date("2020-01-01T00:00:00.000Z"));
+  store.recordProvider("claude", { five_hour: { utilization: 2, resets_at: null } }, new Date("2026-01-09T00:01:00.000Z"));
+
+  const fine = store.toSeries("fine");
+
+  assert.equal(fine.retentionDays, null);
+  assert.deepEqual(fine.series[0].points.map((p) => p.value), [1, 2]);
+});
+
 test("HistoryStore can aggregate percentage samples into hourly and daily graph points", () => {
   const store = new HistoryStore({ retentionMs: 8 * 24 * 60 * 60 * 1000 });
 

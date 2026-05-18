@@ -43,7 +43,9 @@
   .history .grid-line { stroke: var(--border); stroke-width: 1; opacity: 0.35; }
   .history .range { stroke-width: 6; stroke-linecap: round; opacity: 0.32; }
   .history .line { fill: none; stroke-width: 2; }
-  .history .point { opacity: 0.92; stroke-width: 1.5; }
+  .history .point { opacity: 0.92; stroke-width: 1.5; cursor: crosshair; }
+  .history-tooltip { position: fixed; z-index: 50; max-width: 260px; pointer-events: none; background: rgba(20, 24, 29, 0.96); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.35; box-shadow: 0 12px 36px rgba(0,0,0,0.4); white-space: pre-line; }
+  .history-tooltip.hidden { display: none; }
   .history .caption { color: var(--muted); font-size: 12px; margin-top: 8px; }
   .history-note { color: var(--muted); font-size: 12px; margin-top: 8px; }
   .history-note strong { color: var(--fg); }
@@ -99,6 +101,7 @@
     </div>
   </div>
   <svg id="history-chart" viewBox="0 0 900 260" role="img" aria-label="usage history chart"></svg>
+  <div id="history-tooltip" class="history-tooltip hidden" role="tooltip"></div>
   <div class="history-note"><strong>Note:</strong> Codex 7-day is a rolling window, so it can drop when older usage ages out; it does not have to hit 0% unless there was no usage during the whole window. Aggregated views show average dots plus min–max bars.</div>
 </section>
 
@@ -109,6 +112,7 @@ const statusEl = document.getElementById("status");
 const tsEl = document.getElementById("ts");
 const historyChart = document.getElementById("history-chart");
 const historyCaption = document.getElementById("history-caption");
+const historyTooltip = document.getElementById("history-tooltip");
 const historySeriesToggle = document.getElementById("history-series-toggle");
 const historySeriesMenu = document.getElementById("history-series-menu");
 const HISTORY_SERIES_STORAGE_KEY = "usage-api:selected-history-series";
@@ -396,11 +400,12 @@ function renderHistory(history) {
       })
       .join("");
     const dotEvery = Math.max(1, Math.ceil(item.series.points.length / 50));
-    const dots = item.series.points
+        const dots = item.series.points
       .filter((_p, i) => i % dotEvery === 0 || i === item.series.points.length - 1)
       .map(p => {
         const cx = x(new Date(p.t).getTime()) + offset;
-        return `<circle class="point" fill="${item.color}" stroke="${item.color}" cx="${cx.toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="3"><title>${escapeHtml(item.label)} · ${fmtTime(p.t)} · avg ${fmtPct(p.value)} · range ${fmtPct(p.min)}–${fmtPct(p.max)} · ${p.count} sample${p.count === 1 ? "" : "s"}</title></circle>`;
+        const tooltip = `${item.label}\n${fmtTime(p.t)}\naverage ${fmtPct(p.value)}\nrange ${fmtPct(p.min)}–${fmtPct(p.max)}\n${p.count} sample${p.count === 1 ? "" : "s"}`;
+        return `<circle class="point" fill="${item.color}" stroke="${item.color}" cx="${cx.toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="3" tabindex="0" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}"><title>${escapeHtml(tooltip)}</title></circle>`;
       })
       .join("");
     return `${ranges}<polyline class="line" stroke="${item.color}" points="${coords}"></polyline>${dots}`;
@@ -423,6 +428,41 @@ function renderHistory(history) {
   const rangeNote = history.granularity === "fine" ? "" : " · dots are averages; bars are min–max";
   historyCaption.textContent = `${history.granularity} · ${selected.length} selected · ${allPoints.length} point${allPoints.length === 1 ? "" : "s"}${rangeNote} · ${first} → ${last}`;
 }
+
+function showHistoryTooltip(event) {
+  const point = event.target.closest?.(".point");
+  const text = point?.dataset?.tooltip;
+  if (!text) return;
+  historyTooltip.textContent = text;
+  historyTooltip.classList.remove("hidden");
+  moveHistoryTooltip(event);
+}
+
+function moveHistoryTooltip(event) {
+  if (historyTooltip.classList.contains("hidden")) return;
+  const x = Math.min(window.innerWidth - 280, event.clientX + 14);
+  const y = Math.min(window.innerHeight - 130, event.clientY + 14);
+  historyTooltip.style.left = `${Math.max(8, x)}px`;
+  historyTooltip.style.top = `${Math.max(8, y)}px`;
+}
+
+function hideHistoryTooltip() {
+  historyTooltip.classList.add("hidden");
+}
+
+historyChart.addEventListener("mouseover", event => {
+  if (event.target.closest?.(".point")) showHistoryTooltip(event);
+});
+historyChart.addEventListener("mousemove", moveHistoryTooltip);
+historyChart.addEventListener("mouseout", event => {
+  if (event.target.closest?.(".point")) hideHistoryTooltip();
+});
+historyChart.addEventListener("focusin", event => {
+  if (event.target.closest?.(".point")) showHistoryTooltip(event);
+});
+historyChart.addEventListener("focusout", event => {
+  if (event.target.closest?.(".point")) hideHistoryTooltip();
+});
 
 function renderSeriesMenu() {
   historySeriesToggle.textContent = `series (${selectedSeriesKeys.size}) ▾`;

@@ -88,6 +88,14 @@ test("history chart colors dots and range bars with each series color", () => {
   assert.match(html, /<line class="range" stroke="\$\{item\.color\}"/);
 });
 
+test("history chart shows custom hover popup details for graph dots", () => {
+  assert.match(html, /id="history-tooltip"/);
+  assert.match(html, /class="history-tooltip hidden"/);
+  assert.match(html, /data-tooltip="\$\{escapeHtml\(tooltip\)\}"/);
+  assert.match(html, /showHistoryTooltip\(event\)/);
+  assert.match(html, /hideHistoryTooltip\(\)/);
+});
+
 test("history chart includes readable axes, range bars, and rolling-window help text", () => {
   assert.match(html, /\[100, 75, 50, 25, 0\]/);
   assert.match(html, /class="range"/);

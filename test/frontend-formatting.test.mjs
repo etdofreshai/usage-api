@@ -110,3 +110,9 @@ test("history chart includes readable axes, range bars, and rolling-window help 
   assert.match(html, /Codex 7-day is a rolling window/);
   assert.match(html, /Aggregated views show average dots plus min–max bars/);
 });
+
+test("history chart expected line ramps from zero based on elapsed fraction of window", () => {
+  assert.match(html, /seriesWindowMs/);
+  assert.match(html, /elapsedFraction/);
+  assert.match(html, /rampExpected/);
+});

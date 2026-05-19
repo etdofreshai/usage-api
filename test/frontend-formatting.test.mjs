@@ -88,8 +88,7 @@ test("history chart colors dots, range bars, and expected lines with each series
   assert.doesNotMatch(html, /<polyline class="expected-line" stroke="#fff"/);
   assert.match(html, /expectedCoords/);
   assert.match(html, /expected usage/);
-  assert.match(html, /currentExpectedForSeries\(item\.key\)/);
-  assert.match(html, /const expectedValue = p\.expectedValue \?\? fallbackExpected/);
+  assert.match(html, /p\.expectedValue/);
   assert.match(html, /if \(latestHistory\) renderHistory\(latestHistory\)/);
   assert.match(html, /<circle class="point" fill="\$\{item\.color\}" stroke="\$\{item\.color\}"/);
   assert.match(html, /<line class="range" stroke="\$\{item\.color\}"/);
@@ -111,8 +110,9 @@ test("history chart includes readable axes, range bars, and rolling-window help 
   assert.match(html, /Aggregated views show average dots plus min–max bars/);
 });
 
-test("history chart expected line ramps from zero based on elapsed fraction of window", () => {
-  assert.match(html, /seriesWindowMs/);
-  assert.match(html, /elapsedFraction/);
-  assert.match(html, /rampExpected/);
+test("history chart expected line uses per-point expected values without flat fallback", () => {
+  assert.match(html, /p\.expectedValue != null/);
+  assert.match(html, /y\(p\.expectedValue\)/);
+  assert.doesNotMatch(html, /fallbackExpected/);
+  assert.doesNotMatch(html, /currentExpectedForSeries/);
 });

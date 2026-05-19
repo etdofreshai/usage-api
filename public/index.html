@@ -284,28 +284,6 @@ function seriesKey(series) {
   return `${series.provider}:${series.metric}`;
 }
 
-function currentExpectedForSeries(key) {
-  const providers = latestUsage?.providers ?? {};
-  const [provider, ...metricParts] = key.split(":");
-  const metric = metricParts.join(":");
-  const data = providers[provider]?.data;
-  if (!data) return undefined;
-  const expectedFrom = value => {
-    const expected = value?.expected_percent;
-    return typeof expected === "number" && Number.isFinite(expected) ? Math.max(0, Math.min(100, expected)) : undefined;
-  };
-  if (provider === "codex" && metric.startsWith("GPT-5.3-Codex-Spark ")) {
-    const spark = data.additional?.find(item => item?.name === "GPT-5.3-Codex-Spark");
-    return expectedFrom(spark?.[metric.replace("GPT-5.3-Codex-Spark ", "")]);
-  }
-  return expectedFrom(data[metric]);
-}
-function seriesWindowMs(key) {
-  if (key.includes("monthly")) return 30 * 24 * 60 * 60 * 1000;
-  if (key.includes("seven_day")) return 7 * 24 * 60 * 60 * 1000;
-  if (key.includes("secondary")) return 7 * 24 * 60 * 60 * 1000;
-  return 5 * 60 * 60 * 1000;
-}
 function defaultSeriesKeys() {
   return CURATED_HISTORY_SERIES.filter(option => option.default).map(option => option.key);
 }
@@ -426,18 +404,9 @@ function renderHistory(history) {
       })
       .join("");
     const dotEvery = Math.max(1, Math.ceil(item.series.points.length / 50));
-    const fallbackExpected = currentExpectedForSeries(item.key);
-    const windowMs = seriesWindowMs(item.key);
     const expectedCoords = item.series.points
-      .map(p => ({ ...p, expectedValue: p.expectedValue ?? fallbackExpected }))
       .filter(p => p.expectedValue != null && Number.isFinite(p.expectedValue))
-      .map(p => {
-        const ptMs = new Date(p.t).getTime();
-        const periodStart = Math.floor(ptMs / windowMs) * windowMs;
-        const elapsedFraction = (ptMs - periodStart) / windowMs;
-        const rampExpected = p.expectedValue * elapsedFraction;
-        return `${(x(ptMs) + offset).toFixed(1)},${y(rampExpected).toFixed(1)}`;
-      })
+      .map(p => `${(x(new Date(p.t).getTime()) + offset).toFixed(1)},${y(p.expectedValue).toFixed(1)}`)
       .join(" ");
     const expectedLine = expectedCoords
       ? `<polyline class="expected-line" stroke="${item.color}" points="${expectedCoords}"><title>${escapeHtml(item.label)} expected usage</title></polyline>`
@@ -446,8 +415,7 @@ function renderHistory(history) {
       .filter((_p, i) => i % dotEvery === 0 || i === item.series.points.length - 1)
       .map(p => {
         const cx = x(new Date(p.t).getTime()) + offset;
-        const expectedValue = p.expectedValue ?? fallbackExpected;
-        const expectedText = expectedValue == null ? "" : `\nexpected ${fmtPct(expectedValue)}`;
+        const expectedText = p.expectedValue != null ? `\nexpected ${fmtPct(p.expectedValue)}` : "";
         const tooltip = `${item.label}\n${fmtTime(p.t)}\naverage ${fmtPct(p.value)}${expectedText}\nrange ${fmtPct(p.min)}–${fmtPct(p.max)}\n${p.count} sample${p.count === 1 ? "" : "s"}`;
         return `<circle class="point" fill="${item.color}" stroke="${item.color}" cx="${cx.toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="3" tabindex="0" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}"><title>${escapeHtml(tooltip)}</title></circle>`;
       })

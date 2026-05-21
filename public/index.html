@@ -37,6 +37,9 @@
   .series-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 10; min-width: 180px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px; box-shadow: 0 12px 36px rgba(0,0,0,0.35); }
   .series-menu.hidden { display: none; }
   .series-menu button { display: block; width: 100%; text-align: left; margin: 2px 0; }
+  .series-option { border-top: 1px solid rgba(255,255,255,0.04); padding-top: 4px; margin-top: 4px; }
+  .expected-toggle { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 11px; padding: 2px 8px 4px; }
+  .expected-toggle input { accent-color: var(--accent); }
   .series-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
   .history svg { width: 100%; height: 260px; display: block; background: #0f1318; border: 1px solid var(--border); border-radius: 8px; }
   .history .axis { stroke: var(--border); stroke-width: 1; }
@@ -117,6 +120,7 @@ const historyTooltip = document.getElementById("history-tooltip");
 const historySeriesToggle = document.getElementById("history-series-toggle");
 const historySeriesMenu = document.getElementById("history-series-menu");
 const HISTORY_SERIES_STORAGE_KEY = "usage-api:selected-history-series";
+const EXPECTED_SERIES_STORAGE_KEY = "usage-api:expected-history-series";
 const CURATED_HISTORY_SERIES = [
   { key: "claude:five_hour", label: "Claude Code 5-hour", color: "#f97316", default: true },
   { key: "claude:seven_day", label: "Claude Code 7-day", color: "#fb923c", default: true },
@@ -132,6 +136,7 @@ const CURATED_HISTORY_SERIES = [
 ];
 let historyGranularity = loadHistoryGranularity();
 let selectedSeriesKeys = loadSelectedSeriesKeys();
+let expectedSeriesKeys = loadExpectedSeriesKeys();
 let latestHistory = null;
 let latestUsage = null;
 document.getElementById("every").textContent = (REFRESH_MS / 1000).toFixed(0);
@@ -352,6 +357,25 @@ function saveSelectedSeriesKeys() {
   localStorage.setItem("usage-api:selected-history-series", JSON.stringify([...selectedSeriesKeys]));
 }
 
+function loadExpectedSeriesKeys() {
+  try {
+    const raw = localStorage.getItem(EXPECTED_SERIES_STORAGE_KEY);
+    if (raw) return new Set(JSON.parse(raw).filter(key => allSeriesKeys().includes(key)));
+  } catch {}
+  return new Set(defaultSeriesKeys());
+}
+
+function saveExpectedSeriesKeys() {
+  localStorage.setItem(EXPECTED_SERIES_STORAGE_KEY, JSON.stringify([...expectedSeriesKeys]));
+}
+
+function setExpectedSeriesKeys(keys) {
+  expectedSeriesKeys = new Set(keys);
+  saveExpectedSeriesKeys();
+  if (latestHistory) renderHistory(latestHistory);
+  else renderSeriesMenu();
+}
+
 function setSelectedSeriesKeys(keys) {
   selectedSeriesKeys = new Set(keys);
   saveSelectedSeriesKeys();
@@ -408,7 +432,7 @@ function renderHistory(history) {
       .filter(p => p.expectedValue != null && Number.isFinite(p.expectedValue))
       .map(p => `${(x(new Date(p.t).getTime()) + offset).toFixed(1)},${y(p.expectedValue).toFixed(1)}`)
       .join(" ");
-    const expectedLine = expectedCoords
+    const expectedLine = expectedSeriesKeys.has(item.key) && expectedCoords
       ? `<polyline class="expected-line" stroke="${item.color}" points="${expectedCoords}"><title>${escapeHtml(item.label)} expected usage</title></polyline>`
       : "";
     const dots = item.series.points
@@ -487,7 +511,13 @@ function renderSeriesMenu() {
   `;
   const options = CURATED_HISTORY_SERIES.map(option => {
     const checked = selectedSeriesKeys.has(option.key);
-    return `<button type="button" class="${checked ? "checked" : ""}" data-series-key="${escapeHtml(option.key)}"><span style="color:${option.color}">●</span> ${checked ? "✓" : "＋"} ${escapeHtml(option.label)}</button>`;
+    const expectedChecked = expectedSeriesKeys.has(option.key);
+    return `
+      <div class="series-option">
+        <button type="button" class="${checked ? "checked" : ""}" data-series-key="${escapeHtml(option.key)}"><span style="color:${option.color}">●</span> ${checked ? "✓" : "＋"} ${escapeHtml(option.label)}</button>
+        <label class="expected-toggle"><input type="checkbox" data-expected-series-key="${escapeHtml(option.key)}" ${expectedChecked ? "checked" : ""}> Show expected percentages</label>
+      </div>
+    `;
   }).join("");
   historySeriesMenu.innerHTML = actions + options;
 }
@@ -499,12 +529,31 @@ function toggleSeriesMenu() {
 
 historySeriesToggle.addEventListener("click", toggleSeriesMenu);
 historySeriesMenu.addEventListener("click", (event) => {
+  const expectedCheckbox = event.target.closest?.("[data-expected-series-key]");
+  if (expectedCheckbox) {
+    const key = expectedCheckbox.dataset.expectedSeriesKey;
+    if (expectedCheckbox.checked) expectedSeriesKeys.add(key);
+    else expectedSeriesKeys.delete(key);
+    saveExpectedSeriesKeys();
+    if (latestHistory) renderHistory(latestHistory);
+    else renderSeriesMenu();
+    return;
+  }
   const actionButton = event.target.closest("[data-series-action]");
   if (actionButton) {
     const action = actionButton.dataset.seriesAction;
-    if (action === "all") setSelectedSeriesKeys(allSeriesKeys());
-    if (action === "none") setSelectedSeriesKeys([]);
-    if (action === "default") setSelectedSeriesKeys(defaultSeriesKeys());
+    if (action === "all") {
+      setSelectedSeriesKeys(allSeriesKeys());
+      setExpectedSeriesKeys(allSeriesKeys());
+    }
+    if (action === "none") {
+      setSelectedSeriesKeys([]);
+      setExpectedSeriesKeys([]);
+    }
+    if (action === "default") {
+      setSelectedSeriesKeys(defaultSeriesKeys());
+      setExpectedSeriesKeys(defaultSeriesKeys());
+    }
     return;
   }
   const button = event.target.closest("[data-series-key]");

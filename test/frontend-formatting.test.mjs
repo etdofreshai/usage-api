@@ -73,6 +73,15 @@ test("history series menu supports bulk actions and localStorage persistence", (
   assert.match(html, /localStorage\.setItem\("usage-api:selected-history-series"/);
 });
 
+test("history series menu supports per-series expected-line checkboxes with persistence", () => {
+  assert.match(html, /EXPECTED_SERIES_STORAGE_KEY = "usage-api:expected-history-series"/);
+  assert.match(html, /loadExpectedSeriesKeys\(\)/);
+  assert.match(html, /saveExpectedSeriesKeys\(\)/);
+  assert.match(html, /data-expected-series-key/);
+  assert.match(html, /Show expected percentages/);
+  assert.match(html, /expectedSeriesKeys\.has\(item\.key\)/);
+});
+
 test("dashboard remembers selected view and history granularity", () => {
   assert.match(html, /localStorage\.getItem\("usage-api:selected-view"\)/);
   assert.match(html, /localStorage\.setItem\("usage-api:selected-view", view\)/);

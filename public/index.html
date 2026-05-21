@@ -40,6 +40,8 @@
   .series-option { border-top: 1px solid rgba(255,255,255,0.04); padding-top: 4px; margin-top: 4px; }
   .expected-toggle { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 11px; padding: 2px 8px 4px; }
   .expected-toggle input { accent-color: var(--accent); }
+  .squash-toggle { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
+  .squash-toggle input { accent-color: var(--accent); }
   .series-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
   .history svg { width: 100%; height: 260px; display: block; background: #0f1318; border: 1px solid var(--border); border-radius: 8px; }
   .history .axis { stroke: var(--border); stroke-width: 1; }
@@ -98,6 +100,7 @@
       <button type="button" data-granularity="daily" class="active">daily</button>
       <button type="button" data-granularity="hourly">hourly</button>
       <button type="button" data-granularity="fine">finest</button>
+      <label class="squash-toggle"><input type="checkbox" id="history-squash-five-hour"> Squash 5-hour ×¼</label>
       <div class="series-picker">
         <button type="button" id="history-series-toggle" aria-expanded="false">series ▾</button>
         <div id="history-series-menu" class="series-menu hidden"></div>
@@ -119,6 +122,7 @@ const historyCaption = document.getElementById("history-caption");
 const historyTooltip = document.getElementById("history-tooltip");
 const historySeriesToggle = document.getElementById("history-series-toggle");
 const historySeriesMenu = document.getElementById("history-series-menu");
+const historySquashFiveHour = document.getElementById("history-squash-five-hour");
 const HISTORY_SERIES_STORAGE_KEY = "usage-api:selected-history-series";
 const EXPECTED_SERIES_STORAGE_KEY = "usage-api:expected-history-series";
 const CURATED_HISTORY_SERIES = [
@@ -137,6 +141,7 @@ const CURATED_HISTORY_SERIES = [
 let historyGranularity = loadHistoryGranularity();
 let selectedSeriesKeys = loadSelectedSeriesKeys();
 let expectedSeriesKeys = loadExpectedSeriesKeys();
+let squashFiveHour = loadSquashFiveHour();
 let latestHistory = null;
 let latestUsage = null;
 document.getElementById("every").textContent = (REFRESH_MS / 1000).toFixed(0);
@@ -321,6 +326,33 @@ function saveHistoryGranularity(granularity) {
   localStorage.setItem("usage-api:history-granularity", granularity);
 }
 
+function loadSquashFiveHour() {
+  try {
+    return localStorage.getItem("usage-api:squash-five-hour") === "true";
+  } catch {}
+  return false;
+}
+
+function saveSquashFiveHour() {
+  localStorage.setItem("usage-api:squash-five-hour", String(squashFiveHour));
+}
+
+function isFiveHourSeries(key) {
+  return key.includes("five_hour") || key.includes("primary");
+}
+
+function scaledHistoryValue(item, value) {
+  return squashFiveHour && isFiveHourSeries(item.key) ? value / 4 : value;
+}
+
+function applySquashFiveHour(checked, options = {}) {
+  const shouldRender = options.render ?? true;
+  squashFiveHour = checked;
+  historySquashFiveHour.checked = checked;
+  saveSquashFiveHour();
+  if (shouldRender && latestHistory) renderHistory(latestHistory);
+}
+
 function applySelectedView(view, options = {}) {
   const shouldFetch = options.fetch ?? true;
   document.querySelectorAll("[data-view]").forEach(button => {
@@ -419,18 +451,18 @@ function renderHistory(history) {
   const lines = selected.map((item, seriesIndex) => {
     const offset = oneBucket ? (seriesIndex - (selected.length - 1) / 2) * 18 : 0;
     const coords = item.series.points
-      .map(p => `${(x(new Date(p.t).getTime()) + offset).toFixed(1)},${y(p.value).toFixed(1)}`)
+      .map(p => `${(x(new Date(p.t).getTime()) + offset).toFixed(1)},${y(scaledHistoryValue(item, p.value)).toFixed(1)}`)
       .join(" ");
     const ranges = history.granularity === "fine" ? "" : item.series.points
       .map(p => {
         const cx = x(new Date(p.t).getTime()) + offset;
-        return `<line class="range" stroke="${item.color}" x1="${cx.toFixed(1)}" y1="${y(p.min).toFixed(1)}" x2="${cx.toFixed(1)}" y2="${y(p.max).toFixed(1)}"><title>${escapeHtml(item.label)} range · ${fmtPct(p.min)}–${fmtPct(p.max)}</title></line>`;
+        return `<line class="range" stroke="${item.color}" x1="${cx.toFixed(1)}" y1="${y(scaledHistoryValue(item, p.min)).toFixed(1)}" x2="${cx.toFixed(1)}" y2="${y(scaledHistoryValue(item, p.max)).toFixed(1)}"><title>${escapeHtml(item.label)} range · ${fmtPct(p.min)}–${fmtPct(p.max)}${squashFiveHour && isFiveHourSeries(item.key) ? " · displayed ×¼" : ""}</title></line>`;
       })
       .join("");
     const dotEvery = Math.max(1, Math.ceil(item.series.points.length / 50));
     const expectedCoords = item.series.points
       .filter(p => p.expectedValue != null && Number.isFinite(p.expectedValue))
-      .map(p => `${(x(new Date(p.t).getTime()) + offset).toFixed(1)},${y(p.expectedValue).toFixed(1)}`)
+      .map(p => `${(x(new Date(p.t).getTime()) + offset).toFixed(1)},${y(scaledHistoryValue(item, p.expectedValue)).toFixed(1)}`)
       .join(" ");
     const expectedLine = expectedSeriesKeys.has(item.key) && expectedCoords
       ? `<polyline class="expected-line" stroke="${item.color}" points="${expectedCoords}"><title>${escapeHtml(item.label)} expected usage</title></polyline>`
@@ -439,9 +471,10 @@ function renderHistory(history) {
       .filter((_p, i) => i % dotEvery === 0 || i === item.series.points.length - 1)
       .map(p => {
         const cx = x(new Date(p.t).getTime()) + offset;
-        const expectedText = p.expectedValue != null ? `\nexpected ${fmtPct(p.expectedValue)}` : "";
-        const tooltip = `${item.label}\n${fmtTime(p.t)}\naverage ${fmtPct(p.value)}${expectedText}\nrange ${fmtPct(p.min)}–${fmtPct(p.max)}\n${p.count} sample${p.count === 1 ? "" : "s"}`;
-        return `<circle class="point" fill="${item.color}" stroke="${item.color}" cx="${cx.toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="3" tabindex="0" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}"><title>${escapeHtml(tooltip)}</title></circle>`;
+        const expectedText = p.expectedValue != null ? `\nexpected ${fmtPct(p.expectedValue)}${squashFiveHour && isFiveHourSeries(item.key) ? " (displayed ×¼)" : ""}` : "";
+        const squashText = squashFiveHour && isFiveHourSeries(item.key) ? `\ndisplayed average ${fmtPct(scaledHistoryValue(item, p.value))}` : "";
+        const tooltip = `${item.label}\n${fmtTime(p.t)}\naverage ${fmtPct(p.value)}${squashText}${expectedText}\nrange ${fmtPct(p.min)}–${fmtPct(p.max)}\n${p.count} sample${p.count === 1 ? "" : "s"}`;
+        return `<circle class="point" fill="${item.color}" stroke="${item.color}" cx="${cx.toFixed(1)}" cy="${y(scaledHistoryValue(item, p.value)).toFixed(1)}" r="3" tabindex="0" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}"><title>${escapeHtml(tooltip)}</title></circle>`;
       })
       .join("");
     return `${ranges}<polyline class="line" stroke="${item.color}" points="${coords}"></polyline>${expectedLine}${dots}`;
@@ -528,6 +561,7 @@ function toggleSeriesMenu() {
 }
 
 historySeriesToggle.addEventListener("click", toggleSeriesMenu);
+historySquashFiveHour.addEventListener("change", () => applySquashFiveHour(historySquashFiveHour.checked));
 historySeriesMenu.addEventListener("click", (event) => {
   const expectedCheckbox = event.target.closest?.("[data-expected-series-key]");
   if (expectedCheckbox) {
@@ -572,6 +606,7 @@ document.querySelectorAll("[data-granularity]").forEach(button => {
   button.addEventListener("click", () => applyHistoryGranularity(button.dataset.granularity));
 });
 applyHistoryGranularity(historyGranularity, { fetch: false });
+applySquashFiveHour(squashFiveHour, { render: false });
 applySelectedView(loadSelectedView(), { fetch: false });
 renderSeriesMenu();
 

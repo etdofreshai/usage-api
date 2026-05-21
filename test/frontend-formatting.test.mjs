@@ -82,6 +82,16 @@ test("history series menu supports per-series expected-line checkboxes with pers
   assert.match(html, /expectedSeriesKeys\.has\(item\.key\)/);
 });
 
+test("history graph supports a persisted 5-hour squash-by-four toggle", () => {
+  assert.match(html, /id="history-squash-five-hour"/);
+  assert.match(html, /Squash 5-hour ×¼/);
+  assert.match(html, /localStorage\.getItem\("usage-api:squash-five-hour"\)/);
+  assert.match(html, /localStorage\.setItem\("usage-api:squash-five-hour"/);
+  assert.match(html, /function isFiveHourSeries\(key\)/);
+  assert.match(html, /function scaledHistoryValue\(item, value\)/);
+  assert.ok(html.includes('return squashFiveHour && isFiveHourSeries(item.key) ? value / 4 : value'));
+});
+
 test("dashboard remembers selected view and history granularity", () => {
   assert.match(html, /localStorage\.getItem\("usage-api:selected-view"\)/);
   assert.match(html, /localStorage\.setItem\("usage-api:selected-view", view\)/);
@@ -124,7 +134,7 @@ test("history chart includes readable axes, range bars, and rolling-window help 
 
 test("history chart expected line uses per-point expected values without flat fallback", () => {
   assert.match(html, /p\.expectedValue != null/);
-  assert.match(html, /y\(p\.expectedValue\)/);
+  assert.match(html, /y\(scaledHistoryValue\(item, p\.expectedValue\)\)/);
   assert.doesNotMatch(html, /fallbackExpected/);
   assert.doesNotMatch(html, /currentExpectedForSeries/);
 });

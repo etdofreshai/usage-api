@@ -92,6 +92,9 @@ test("history chart colors dots, range bars, and expected lines with each series
   assert.match(html, /if \(latestHistory\) renderHistory\(latestHistory\)/);
   assert.match(html, /<circle class="point" fill="\$\{item\.color\}" stroke="\$\{item\.color\}"/);
   assert.match(html, /<line class="range" stroke="\$\{item\.color\}"/);
+  assert.match(html, /\$\{ranges\}<polyline class="line"[\s\S]*\$\{expectedLine\}\$\{dots\}/);
+  assert.match(html, /stroke-width: 2\.4/);
+  assert.match(html, /stroke-linecap: round/);
 });
 
 test("history chart shows custom hover popup details for graph dots", () => {

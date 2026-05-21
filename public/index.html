@@ -42,8 +42,8 @@
   .history .axis { stroke: var(--border); stroke-width: 1; }
   .history .grid-line { stroke: var(--border); stroke-width: 1; opacity: 0.35; }
   .history .range { stroke-width: 6; stroke-linecap: round; opacity: 0.32; }
-  .history .line { fill: none; stroke-width: 2; }
-  .history .expected-line { fill: none; stroke-width: 1.6; stroke-dasharray: 5 5; opacity: 0.72; }
+  .history .line { fill: none; stroke-width: 2; opacity: 0.9; }
+  .history .expected-line { fill: none; stroke-width: 2.4; stroke-dasharray: 7 4; stroke-linecap: round; opacity: 1; filter: drop-shadow(0 0 2px currentColor); }
   .history .point { opacity: 0.92; stroke-width: 1.5; cursor: crosshair; }
   .history-tooltip { position: fixed; z-index: 50; max-width: 260px; pointer-events: none; background: rgba(20, 24, 29, 0.96); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.35; box-shadow: 0 12px 36px rgba(0,0,0,0.4); white-space: pre-line; }
   .history-tooltip.hidden { display: none; }
@@ -420,7 +420,7 @@ function renderHistory(history) {
         return `<circle class="point" fill="${item.color}" stroke="${item.color}" cx="${cx.toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="3" tabindex="0" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}"><title>${escapeHtml(tooltip)}</title></circle>`;
       })
       .join("");
-    return `${ranges}${expectedLine}<polyline class="line" stroke="${item.color}" points="${coords}"></polyline>${dots}`;
+    return `${ranges}<polyline class="line" stroke="${item.color}" points="${coords}"></polyline>${expectedLine}${dots}`;
   }).join("");
   const legend = selected.map((item, i) => `
     <g transform="translate(${padLeft + (i % 3) * 250},${14 + Math.floor(i / 3) * 16})">

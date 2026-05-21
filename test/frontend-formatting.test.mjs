@@ -92,6 +92,21 @@ test("history graph supports a persisted 5-hour squash-by-four toggle", () => {
   assert.ok(html.includes('return squashFiveHour && isFiveHourSeries(item.key) ? value / 4 : value'));
 });
 
+test("history graph supports persisted time ranges and previous/next navigation", () => {
+  assert.match(html, /data-history-range="1d"/);
+  assert.match(html, /data-history-range="7d"/);
+  assert.match(html, /data-history-range="14d"/);
+  assert.match(html, /data-history-range="1M"/);
+  assert.match(html, /data-history-range="2M"/);
+  assert.match(html, /id="history-prev-window"/);
+  assert.match(html, /id="history-next-window"/);
+  assert.match(html, /localStorage\.getItem\("usage-api:history-range"\)/);
+  assert.match(html, /localStorage\.setItem\("usage-api:history-range", historyRange\)/);
+  assert.match(html, /function rangeDurationMs\(range\)/);
+  assert.match(html, /function visibleHistoryPoints\(points\)/);
+  assert.match(html, /function shiftHistoryWindow\(direction\)/);
+});
+
 test("dashboard remembers selected view and history granularity", () => {
   assert.match(html, /localStorage\.getItem\("usage-api:selected-view"\)/);
   assert.match(html, /localStorage\.setItem\("usage-api:selected-view", view\)/);

@@ -100,6 +100,13 @@
       <button type="button" data-granularity="daily" class="active">daily</button>
       <button type="button" data-granularity="hourly">hourly</button>
       <button type="button" data-granularity="fine">finest</button>
+      <button type="button" id="history-prev-window" aria-label="previous time window">←</button>
+      <button type="button" data-history-range="1d">1d</button>
+      <button type="button" data-history-range="7d">7d</button>
+      <button type="button" data-history-range="14d">14d</button>
+      <button type="button" data-history-range="1M">1M</button>
+      <button type="button" data-history-range="2M">2M</button>
+      <button type="button" id="history-next-window" aria-label="next time window">→</button>
       <label class="squash-toggle"><input type="checkbox" id="history-squash-five-hour"> Squash 5-hour ×¼</label>
       <div class="series-picker">
         <button type="button" id="history-series-toggle" aria-expanded="false">series ▾</button>
@@ -123,6 +130,8 @@ const historyTooltip = document.getElementById("history-tooltip");
 const historySeriesToggle = document.getElementById("history-series-toggle");
 const historySeriesMenu = document.getElementById("history-series-menu");
 const historySquashFiveHour = document.getElementById("history-squash-five-hour");
+const historyPrevWindow = document.getElementById("history-prev-window");
+const historyNextWindow = document.getElementById("history-next-window");
 const HISTORY_SERIES_STORAGE_KEY = "usage-api:selected-history-series";
 const EXPECTED_SERIES_STORAGE_KEY = "usage-api:expected-history-series";
 const CURATED_HISTORY_SERIES = [
@@ -142,6 +151,8 @@ let historyGranularity = loadHistoryGranularity();
 let selectedSeriesKeys = loadSelectedSeriesKeys();
 let expectedSeriesKeys = loadExpectedSeriesKeys();
 let squashFiveHour = loadSquashFiveHour();
+let historyRange = loadHistoryRange();
+let historyWindowEndMs = null;
 let latestHistory = null;
 let latestUsage = null;
 document.getElementById("every").textContent = (REFRESH_MS / 1000).toFixed(0);
@@ -326,6 +337,73 @@ function saveHistoryGranularity(granularity) {
   localStorage.setItem("usage-api:history-granularity", granularity);
 }
 
+function loadHistoryRange() {
+  try {
+    const range = localStorage.getItem("usage-api:history-range");
+    if (["1d", "7d", "14d", "1M", "2M"].includes(range)) return range;
+  } catch {}
+  return "7d";
+}
+
+function saveHistoryRange() {
+  localStorage.setItem("usage-api:history-range", historyRange);
+}
+
+function rangeDurationMs(range) {
+  return ({ "1d": 1, "7d": 7, "14d": 14, "1M": 31, "2M": 62 }[range] ?? 7) * 24 * 60 * 60 * 1000;
+}
+
+function visibleHistoryPoints(points) {
+  if (!points?.length) return [];
+  const validTimes = points.map(p => new Date(p.t).getTime()).filter(Number.isFinite);
+  if (!validTimes.length) return [];
+  const latest = Math.max(...validTimes);
+  const duration = rangeDurationMs(historyRange);
+  const end = historyWindowEndMs ?? latest;
+  const start = end - duration;
+  return points.filter(p => {
+    const t = new Date(p.t).getTime();
+    return Number.isFinite(t) && t >= start && t <= end;
+  });
+}
+
+function applyHistoryRange(range, options = {}) {
+  const shouldRender = options.render ?? true;
+  historyRange = range;
+  historyWindowEndMs = null;
+  saveHistoryRange();
+  document.querySelectorAll("[data-history-range]").forEach(button => {
+    button.classList.toggle("active", button.dataset.historyRange === range);
+  });
+  if (shouldRender && latestHistory) renderHistory(latestHistory);
+}
+
+function shiftHistoryWindow(direction) {
+  if (!latestHistory) return;
+  const allTimes = (latestHistory.series ?? []).flatMap(s => s.points ?? []).map(p => new Date(p.t).getTime()).filter(Number.isFinite);
+  if (!allTimes.length) return;
+  const minAvailable = Math.min(...allTimes);
+  const maxAvailable = Math.max(...allTimes);
+  const duration = rangeDurationMs(historyRange);
+  const currentEnd = historyWindowEndMs ?? maxAvailable;
+  const nextEnd = currentEnd + direction * duration;
+  historyWindowEndMs = Math.max(minAvailable + duration, Math.min(maxAvailable, nextEnd));
+  renderHistory(latestHistory);
+}
+
+function updateHistoryWindowButtons(times) {
+  if (!times.length) return;
+  const minAvailable = Math.min(...times);
+  const maxAvailable = Math.max(...times);
+  const duration = rangeDurationMs(historyRange);
+  const end = historyWindowEndMs ?? maxAvailable;
+  historyPrevWindow.disabled = end - duration <= minAvailable;
+  historyNextWindow.disabled = end >= maxAvailable;
+  document.querySelectorAll("[data-history-range]").forEach(button => {
+    button.classList.toggle("active", button.dataset.historyRange === historyRange);
+  });
+}
+
 function loadSquashFiveHour() {
   try {
     return localStorage.getItem("usage-api:squash-five-hour") === "true";
@@ -422,17 +500,24 @@ function renderHistory(history) {
   const seriesMap = new Map((history.series ?? []).map(s => [seriesKey(s), s]));
   const selected = CURATED_HISTORY_SERIES
     .filter(option => selectedSeriesKeys.has(option.key))
-    .map(option => ({ ...option, series: seriesMap.get(option.key) }))
+    .map(option => {
+      const series = seriesMap.get(option.key);
+      return series ? { ...option, series: { ...series, points: visibleHistoryPoints(series.points) } } : { ...option, series };
+    })
     .filter(item => item.series && item.series.points.length > 0);
 
   if (selected.length === 0) {
-    historyChart.innerHTML = `<text x="450" y="130" text-anchor="middle" fill="#8a96a4">waiting for selected usage samples</text>`;
+    historyChart.innerHTML = `<text x="450" y="130" text-anchor="middle" fill="#8a96a4">no selected usage samples in this time window</text>`;
     const retentionText = history.retentionDays == null ? "keeps history indefinitely" : `stores last ${history.retentionDays} days`;
-    historyCaption.textContent = `${history.granularity ?? historyGranularity} view · ${retentionText}`;
+    historyCaption.textContent = `${history.granularity ?? historyGranularity} · ${historyRange} window · ${retentionText}`;
+    const allTimes = (history.series ?? []).flatMap(s => s.points ?? []).map(p => new Date(p.t).getTime()).filter(Number.isFinite);
+    updateHistoryWindowButtons(allTimes);
     return;
   }
 
   const allPoints = selected.flatMap(item => item.series.points);
+  const allAvailableTimes = (history.series ?? []).flatMap(s => s.points ?? []).map(p => new Date(p.t).getTime()).filter(Number.isFinite);
+  updateHistoryWindowButtons(allAvailableTimes);
   const width = 900, height = 260, padLeft = 44, padRight = 18, padTop = 30, padBottom = 34;
   const times = allPoints.map(p => new Date(p.t).getTime()).filter(Number.isFinite);
   const rawMinT = Math.min(...times), rawMaxT = Math.max(...times);
@@ -495,7 +580,7 @@ function renderHistory(history) {
   const first = fmtTime(new Date(rawMinT).toISOString());
   const last = fmtTime(new Date(rawMaxT).toISOString());
   const rangeNote = history.granularity === "fine" ? "" : " · dots are averages; bars are min–max";
-  historyCaption.textContent = `${history.granularity} · ${selected.length} selected · ${allPoints.length} point${allPoints.length === 1 ? "" : "s"}${rangeNote} · ${first} → ${last}`;
+  historyCaption.textContent = `${history.granularity} · ${historyRange} window · ${selected.length} selected · ${allPoints.length} point${allPoints.length === 1 ? "" : "s"}${rangeNote} · ${first} → ${last}`;
 }
 
 function showHistoryTooltip(event) {
@@ -605,7 +690,13 @@ document.querySelectorAll("[data-view]").forEach(button => {
 document.querySelectorAll("[data-granularity]").forEach(button => {
   button.addEventListener("click", () => applyHistoryGranularity(button.dataset.granularity));
 });
+document.querySelectorAll("[data-history-range]").forEach(button => {
+  button.addEventListener("click", () => applyHistoryRange(button.dataset.historyRange));
+});
+historyPrevWindow.addEventListener("click", () => shiftHistoryWindow(-1));
+historyNextWindow.addEventListener("click", () => shiftHistoryWindow(1));
 applyHistoryGranularity(historyGranularity, { fetch: false });
+applyHistoryRange(historyRange, { render: false });
 applySquashFiveHour(squashFiveHour, { render: false });
 applySelectedView(loadSelectedView(), { fetch: false });
 renderSeriesMenu();

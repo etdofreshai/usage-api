@@ -45,8 +45,8 @@ const HISTORY_FILE = process.env.USAGE_HISTORY_FILE ?? "/home/node/workspace/usa
 const history = new HistoryStore({ retentionMs: HISTORY_RETENTION_MS, filePath: HISTORY_FILE });
 await history.load();
 
-function remember<T>(provider: string) {
-  return (data: T, fetchedAt: Date) => history.recordProvider(provider, data, fetchedAt);
+function remember<T>(provider: string): (data: T, fetchedAt: Date) => void {
+  return (data: T, fetchedAt: Date) => history.recordProvider(provider, enrichProviderData(provider, data), fetchedAt);
 }
 
 // Accept the workspace .env's existing names as fallbacks.
@@ -86,7 +86,7 @@ const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
 const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000;
 const THIRTY_DAY_MS = 30 * 24 * 60 * 60 * 1000;
 
-function enrichClaude(snap: ReturnType<typeof claude.snapshot>) {
+function enrichClaude(snap: { data?: any }) {
   if (!snap.data) return snap;
   const d = snap.data;
   const enrichSeven = <T extends { utilization: number; resets_at: string | null } | null>(w: T): T =>
@@ -104,7 +104,7 @@ function enrichClaude(snap: ReturnType<typeof claude.snapshot>) {
   };
 }
 
-function enrichCodex(snap: ReturnType<typeof codex.snapshot>) {
+function enrichCodex(snap: { data?: any }) {
   if (!snap.data) return snap;
   const d = snap.data;
   const enrichWin = (w: { used_percent: number; resets_at: string | null; window_minutes: number }, fallbackMin: number) => {
@@ -117,7 +117,7 @@ function enrichCodex(snap: ReturnType<typeof codex.snapshot>) {
       ...d,
       primary: enrichWin(d.primary, 300),
       secondary: enrichWin(d.secondary, 10080),
-      additional: d.additional.map((a) => ({
+      additional: d.additional.map((a: any) => ({
         ...a,
         primary: enrichWin(a.primary, 300),
         secondary: enrichWin(a.secondary, 10080),
@@ -126,7 +126,7 @@ function enrichCodex(snap: ReturnType<typeof codex.snapshot>) {
   };
 }
 
-function enrichZai(snap: ReturnType<NonNullable<typeof zai>["snapshot"]> | { data: null; error: string }) {
+function enrichZai(snap: { data?: any }) {
   if (!("data" in snap) || !snap.data) return snap;
   const d = snap.data;
   return {
@@ -141,6 +141,13 @@ function enrichZai(snap: ReturnType<NonNullable<typeof zai>["snapshot"]> | { dat
         : null,
     },
   };
+}
+
+function enrichProviderData(provider: string, data: unknown): unknown {
+  if (provider === "claude") return enrichClaude({ data }).data;
+  if (provider === "codex") return enrichCodex({ data }).data;
+  if (provider === "zai") return enrichZai({ data }).data;
+  return data;
 }
 
 app.get("/api/usage", (_req, res) => {

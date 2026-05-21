@@ -53,6 +53,29 @@ test("HistoryStore keeps usage samples indefinitely by default", () => {
   assert.deepEqual(fine.series[0].points.map((p) => p.value), [1, 2]);
 });
 
+test("HistoryStore backfills missing expected percentages by walking backward with wraparound", () => {
+  const store = new HistoryStore({ retentionMs: Infinity });
+
+  store.recordProvider("codex", { primary: { used_percent: 10, resets_at: null } }, new Date("2026-01-02T00:00:00.000Z"));
+  store.recordProvider("codex", { primary: { used_percent: 20, resets_at: null } }, new Date("2026-01-02T01:00:00.000Z"));
+  store.recordProvider("codex", { primary: { used_percent: 30, expected_percent: 20, resets_at: null } }, new Date("2026-01-02T02:00:00.000Z"));
+
+  const fine = store.toSeries("fine");
+
+  assert.deepEqual(fine.series[0].points.map((p) => p.expectedValue), [80, 0, 20]);
+});
+
+test("HistoryStore backfill wraps below zero back to 100 percent", () => {
+  const store = new HistoryStore({ retentionMs: Infinity });
+
+  store.recordProvider("codex", { primary: { used_percent: 10, resets_at: null } }, new Date("2026-01-01T20:00:00.000Z"));
+  store.recordProvider("codex", { primary: { used_percent: 20, expected_percent: 20, resets_at: null } }, new Date("2026-01-02T02:00:00.000Z"));
+
+  const fine = store.toSeries("fine");
+
+  assert.deepEqual(fine.series[0].points.map((p) => p.expectedValue), [100, 20]);
+});
+
 test("HistoryStore can aggregate percentage samples into hourly and daily graph points", () => {
   const store = new HistoryStore({ retentionMs: 8 * 24 * 60 * 60 * 1000 });
 

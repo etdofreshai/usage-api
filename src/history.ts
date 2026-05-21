@@ -196,7 +196,10 @@ export class HistoryStore {
         });
       }
     }
-    return sortSeries([...grouped.values()]);
+    return sortSeries([...grouped.values()].map((series) => ({
+      ...series,
+      points: backfillExpectedValues(series.provider, series.metric, series.points),
+    })));
   }
 
   private aggregateSeries(granularity: Exclude<HistoryGranularity, "fine">): MetricSeries[] {
@@ -230,7 +233,7 @@ export class HistoryStore {
     return sortSeries([...grouped.values()].map(({ provider, metric, buckets }) => ({
       provider,
       metric,
-      points: [...buckets.entries()]
+      points: backfillExpectedValues(provider, metric, [...buckets.entries()]
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([t, bucket]) => ({
           t,
@@ -239,13 +242,44 @@ export class HistoryStore {
           min: round(bucket.min),
           max: round(bucket.max),
           count: bucket.count,
-        })),
+        }))),
     })));
   }
 }
 
 function round(value: number) {
   return Math.round(value * 1000) / 1000;
+}
+
+function expectedWindowMs(provider: string, metric: string) {
+  if (provider === "zai" && metric === "monthly") return 30 * 24 * 60 * 60 * 1000;
+  if (metric.includes("seven_day") || metric.includes("secondary")) return 7 * 24 * 60 * 60 * 1000;
+  return 5 * 60 * 60 * 1000;
+}
+
+function wrapExpectedPercent(value: number) {
+  if (value >= 0) return value % 100;
+  const wrapped = value % 100;
+  return wrapped === 0 ? 100 : wrapped + 100;
+}
+
+function backfillExpectedValues(provider: string, metric: string, points: SeriesPoint[]) {
+  const firstKnownIndex = points.findIndex((point) => point.expectedValue !== undefined);
+  if (firstKnownIndex <= 0) return points;
+  const windowMs = expectedWindowMs(provider, metric);
+  const filled = points.map((point) => ({ ...point }));
+  let nextKnown = filled[firstKnownIndex];
+  for (let i = firstKnownIndex - 1; i >= 0; i--) {
+    const currentTime = Date.parse(filled[i].t);
+    const nextTime = Date.parse(nextKnown.t);
+    const nextExpected = nextKnown.expectedValue;
+    if (!Number.isFinite(currentTime) || !Number.isFinite(nextTime) || nextExpected === undefined) continue;
+    const elapsedMs = nextTime - currentTime;
+    const estimated = nextExpected - (elapsedMs / windowMs) * 100;
+    filled[i].expectedValue = round(wrapExpectedPercent(estimated));
+    nextKnown = filled[i];
+  }
+  return filled;
 }
 
 function sortSeries(series: MetricSeries[]) {

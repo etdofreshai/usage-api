@@ -496,6 +496,44 @@ function setSelectedSeriesKeys(keys) {
 }
 
 
+const LOW_DROPOUT_VALUE = 5;
+const MAX_DROPOUT_RUN_MS = 15 * 60 * 1000;
+const MIN_DROPOUT_BOUND_VALUE = 10;
+
+function cleanedHistoryPoints(points) {
+  if (!points?.length) return [];
+  const cleaned = [];
+  for (let i = 0; i < points.length; i += 1) {
+    const point = points[i];
+    if (!Number.isFinite(point.value) || point.value > LOW_DROPOUT_VALUE) {
+      cleaned.push(point);
+      continue;
+    }
+
+    const runStart = i;
+    while (i + 1 < points.length && Number.isFinite(points[i + 1].value) && points[i + 1].value <= LOW_DROPOUT_VALUE) {
+      i += 1;
+    }
+    const runEnd = i;
+    const before = cleaned.at(-1);
+    const after = points[runEnd + 1];
+    const beforeT = before ? new Date(before.t).getTime() : NaN;
+    const afterT = after ? new Date(after.t).getTime() : NaN;
+    const runStartT = new Date(points[runStart].t).getTime();
+    const runEndT = new Date(points[runEnd].t).getTime();
+    const boundedByHealthyValues = before?.value >= MIN_DROPOUT_BOUND_VALUE && after?.value >= MIN_DROPOUT_BOUND_VALUE;
+    const similarBounds = boundedByHealthyValues && Math.abs(before.value - after.value) <= Math.max(10, Math.max(before.value, after.value) * 0.25);
+    const shortRun = Number.isFinite(beforeT) && Number.isFinite(afterT) && Number.isFinite(runStartT) && Number.isFinite(runEndT)
+      && afterT - beforeT <= MAX_DROPOUT_RUN_MS;
+
+    if (similarBounds && shortRun) {
+      continue;
+    }
+    cleaned.push(...points.slice(runStart, runEnd + 1));
+  }
+  return cleaned;
+}
+
 function renderHistory(history) {
   latestHistory = history;
   renderSeriesMenu();
@@ -504,7 +542,7 @@ function renderHistory(history) {
     .filter(option => selectedSeriesKeys.has(option.key))
     .map(option => {
       const series = seriesMap.get(option.key);
-      return series ? { ...option, series: { ...series, points: visibleHistoryPoints(series.points) } } : { ...option, series };
+      return series ? { ...option, series: { ...series, points: cleanedHistoryPoints(visibleHistoryPoints(series.points)) } } : { ...option, series };
     })
     .filter(item => item.series && item.series.points.length > 0);
 

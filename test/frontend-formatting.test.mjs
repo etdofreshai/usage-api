@@ -25,6 +25,15 @@ function loadFmtRel(nowIso = "2026-01-01T00:00:00.000Z") {
   return sandbox.fmtRel;
 }
 
+function loadHistoryOutlierHelpers() {
+  const helperMatch = html.match(/const LOW_DROPOUT_VALUE = 5;[\s\S]*?function cleanedHistoryPoints\(points\) \{[\s\S]*?\n\}/);
+  assert.ok(helperMatch, "history dropout cleanup helpers should exist");
+  const sandbox = { Date, Number, Math };
+  vm.createContext(sandbox);
+  vm.runInContext(`${helperMatch[0]}; globalThis.cleanedHistoryPoints = cleanedHistoryPoints;`, sandbox);
+  return sandbox.cleanedHistoryPoints;
+}
+
 test("fmtRel shows days plus hours for reset times more than a day away", () => {
   const fmtRel = loadFmtRel();
 
@@ -156,4 +165,26 @@ test("history chart expected line uses per-point expected values without flat fa
   assert.match(html, /y\(scaledHistoryValue\(item, p\.expectedValue\)\)/);
   assert.doesNotMatch(html, /fallbackExpected/);
   assert.doesNotMatch(html, /currentExpectedForSeries/);
+});
+
+test("history chart removes short zero dropouts without hiding real reset ramps", () => {
+  const cleanedHistoryPoints = loadHistoryOutlierHelpers();
+  const t = (minutes) => new Date(Date.UTC(2026, 0, 1, 0, minutes)).toISOString();
+
+  const dropout = [
+    { t: t(0), value: 90 },
+    { t: t(1), value: 0 },
+    { t: t(2), value: 0 },
+    { t: t(3), value: 89 },
+  ];
+  assert.deepEqual([...cleanedHistoryPoints(dropout).map((p) => p.value)], [90, 89]);
+
+  const realReset = [
+    { t: t(0), value: 95 },
+    { t: t(1), value: 0 },
+    { t: t(2), value: 1 },
+    { t: t(3), value: 2 },
+    { t: t(4), value: 3 },
+  ];
+  assert.deepEqual([...cleanedHistoryPoints(realReset).map((p) => p.value)], [95, 0, 1, 2, 3]);
 });

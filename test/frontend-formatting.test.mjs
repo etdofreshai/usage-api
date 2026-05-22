@@ -179,6 +179,14 @@ test("history chart removes short zero dropouts without hiding real reset ramps"
   ];
   assert.deepEqual([...cleanedHistoryPoints(dropout).map((p) => p.value)], [90, 89]);
 
+  const closerToPreviousThanZero = [
+    { t: t(0), value: 12 },
+    { t: t(1), value: 0 },
+    { t: t(2), value: 7 },
+    { t: t(3), value: 8 },
+  ];
+  assert.deepEqual([...cleanedHistoryPoints(closerToPreviousThanZero).map((p) => p.value)], [12, 7, 8]);
+
   const realReset = [
     { t: t(0), value: 95 },
     { t: t(1), value: 0 },

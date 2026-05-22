@@ -523,10 +523,13 @@ function cleanedHistoryPoints(points) {
     const runEndT = new Date(points[runEnd].t).getTime();
     const boundedByHealthyValues = before?.value >= MIN_DROPOUT_BOUND_VALUE && after?.value >= MIN_DROPOUT_BOUND_VALUE;
     const similarBounds = boundedByHealthyValues && Math.abs(before.value - after.value) <= Math.max(10, Math.max(before.value, after.value) * 0.25);
+    const firstDropValue = points[runStart].value;
+    const reboundsTowardPrevious = before && after && firstDropValue === 0
+      && Math.abs(after.value - before.value) < Math.abs(after.value - firstDropValue);
     const shortRun = Number.isFinite(beforeT) && Number.isFinite(afterT) && Number.isFinite(runStartT) && Number.isFinite(runEndT)
       && afterT - beforeT <= MAX_DROPOUT_RUN_MS;
 
-    if (similarBounds && shortRun) {
+    if ((similarBounds || reboundsTowardPrevious) && shortRun) {
       continue;
     }
     cleaned.push(...points.slice(runStart, runEnd + 1));

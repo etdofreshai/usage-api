@@ -60,6 +60,8 @@
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
   .card h2 { margin: 0; padding: 12px 14px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
   .card h2 .stamp { font-weight: normal; font-size: 11px; text-transform: none; letter-spacing: 0; }
+  .card h2 .provider-link { color: inherit; text-decoration: none; }
+  .card h2 .provider-link:hover { text-decoration: underline; color: var(--fg); }
   .card .body { padding: 12px 14px; }
   .row { display: grid; grid-template-columns: 110px 1fr 60px; gap: 10px; align-items: center; margin: 8px 0; }
   .row .label { color: var(--muted); font-size: 12px; }
@@ -262,6 +264,12 @@ function renderRaw(snap) {
 }
 function escapeHtml(s) { return String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
 
+const PROVIDER_LINKS = {
+  claude: "https://claude.ai/settings/usage",
+  codex: "https://chatgpt.com/codex/cloud/settings/analytics#usage",
+  zai: "https://z.ai/manage-apikey/subscription#usage",
+};
+
 const RENDERERS = {
   claude: renderClaude,
   codex: renderCodex,
@@ -285,9 +293,13 @@ function card(name, snap) {
   const body = snap?.error
     ? `<div class="err">${escapeHtml(String(snap.error))}</div>${snap.data ? renderer(snap) : ""}`
     : renderer(snap || {});
+  const link = PROVIDER_LINKS[name];
+  const titleHtml = link
+    ? `<a class="provider-link" href="${link}" target="_blank" rel="noopener">${name}</a>`
+    : name;
   return `
     <section class="card">
-      <h2>${statusDot(snap)}${name}<span class="stamp">${stamp}</span></h2>
+      <h2>${statusDot(snap)}${titleHtml}<span class="stamp">${stamp}</span></h2>
       <div class="body">${body}</div>
     </section>
   `;

@@ -196,3 +196,13 @@ test("history chart removes short zero dropouts without hiding real reset ramps"
   ];
   assert.deepEqual([...cleanedHistoryPoints(realReset).map((p) => p.value)], [95, 0, 1, 2, 3]);
 });
+
+test("dashboard cards link to provider usage pages", () => {
+  assert.match(html, /PROVIDER_LINKS/);
+  assert.match(html, /claude\.ai\/settings\/usage/);
+  assert.match(html, /chatgpt\.com\/codex\/cloud\/settings\/analytics#usage/);
+  assert.match(html, /z\.ai\/manage-apikey\/subscription#usage/);
+  assert.match(html, /class="provider-link"/);
+  assert.match(html, /target="_blank"/);
+  assert.match(html, /rel="noopener"/);
+});

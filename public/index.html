@@ -44,6 +44,11 @@
   .expected-toggle input { accent-color: var(--accent); cursor: pointer; }
   .squash-toggle { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
   .squash-toggle input { accent-color: var(--accent); }
+  .layout-toggle { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+  .layout-toggle select { background: transparent; color: var(--fg); border: none; font: inherit; font-size: 12px; cursor: pointer; outline: none; padding: 1px 2px; }
+  .layout-toggle select option { background: var(--panel-2); color: var(--fg); }
+  .history .band-separator { stroke: var(--border); stroke-width: 1; opacity: 0.5; }
+  .history .band-label { font-size: 11px; font-weight: 600; }
   .series-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
   .history svg { width: 100%; height: 260px; display: block; background: #0f1318; border: 1px solid var(--border); border-radius: 8px; }
   .history .axis { stroke: var(--border); stroke-width: 1; }
@@ -112,6 +117,12 @@
       <button type="button" data-history-range="2M">2M</button>
       <button type="button" id="history-next-window" aria-label="next time window">→</button>
       <label class="squash-toggle"><input type="checkbox" id="history-squash-five-hour"> Squash 5-hour ×¼</label>
+      <label class="layout-toggle">Layout
+        <select id="history-layout" aria-label="graph layout">
+          <option value="overlap">overlap</option>
+          <option value="stacked">stacked</option>
+        </select>
+      </label>
       <div class="series-picker">
         <button type="button" id="history-series-toggle" aria-expanded="false">series ▾</button>
         <div id="history-series-menu" class="series-menu hidden"></div>
@@ -134,6 +145,7 @@ const historyTooltip = document.getElementById("history-tooltip");
 const historySeriesToggle = document.getElementById("history-series-toggle");
 const historySeriesMenu = document.getElementById("history-series-menu");
 const historySquashFiveHour = document.getElementById("history-squash-five-hour");
+const historyLayoutSelect = document.getElementById("history-layout");
 const historyPrevWindow = document.getElementById("history-prev-window");
 const historyNextWindow = document.getElementById("history-next-window");
 const HISTORY_SERIES_STORAGE_KEY = "usage-api:selected-history-series";
@@ -155,6 +167,7 @@ let historyGranularity = loadHistoryGranularity();
 let selectedSeriesKeys = loadSelectedSeriesKeys();
 let expectedSeriesKeys = loadExpectedSeriesKeys();
 let squashFiveHour = loadSquashFiveHour();
+let graphLayout = loadGraphLayout();
 let historyRange = loadHistoryRange();
 let historyWindowEndMs = null;
 let latestHistory = null;
@@ -445,6 +458,31 @@ function applySquashFiveHour(checked, options = {}) {
   if (shouldRender && latestHistory) renderHistory(latestHistory);
 }
 
+function loadGraphLayout() {
+  try {
+    const layout = localStorage.getItem("usage-api:graph-layout");
+    if (layout === "overlap" || layout === "stacked") return layout;
+  } catch {}
+  return "overlap";
+}
+
+function saveGraphLayout() {
+  localStorage.setItem("usage-api:graph-layout", graphLayout);
+}
+
+function stackedY(seriesIndex, value, plotTop, bandHeight) {
+  const clamped = Math.max(0, Math.min(100, value));
+  return plotTop + seriesIndex * bandHeight + (1 - clamped / 100) * bandHeight;
+}
+
+function applyGraphLayout(layout, options = {}) {
+  const shouldRender = options.render ?? true;
+  graphLayout = layout === "stacked" ? "stacked" : "overlap";
+  if (historyLayoutSelect) historyLayoutSelect.value = graphLayout;
+  saveGraphLayout();
+  if (shouldRender && latestHistory) renderHistory(latestHistory);
+}
+
 function applySelectedView(view, options = {}) {
   const shouldFetch = options.fetch ?? true;
   document.querySelectorAll("[data-view]").forEach(button => {
@@ -583,26 +621,39 @@ function renderHistory(history) {
   const plotH = height - padTop - padBottom;
   const x = t => padLeft + ((t - minT) / Math.max(1, maxT - minT)) * plotW;
   const y = v => padTop + (1 - Math.max(0, Math.min(100, v)) / 100) * plotH;
-  const yTicks = [100, 75, 50, 25, 0].map(v => `
+  const isStacked = graphLayout === "stacked" && selected.length > 1;
+  const bandH = isStacked ? plotH / selected.length : plotH;
+  const yForSeries = (seriesIndex, v) => isStacked
+    ? stackedY(seriesIndex, v, padTop, bandH)
+    : y(v);
+  const yTicks = isStacked ? "" : [100, 75, 50, 25, 0].map(v => `
     <line class="grid-line" x1="${padLeft}" y1="${y(v).toFixed(1)}" x2="${width - padRight}" y2="${y(v).toFixed(1)}"></line>
     <text x="${padLeft - 8}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end" fill="#8a96a4" font-size="11">${v}%</text>
   `).join("");
+  const bandSeparators = isStacked ? selected.slice(1).map((_, i) => {
+    const sy = (padTop + (i + 1) * bandH).toFixed(1);
+    return `<line class="band-separator" x1="${padLeft}" y1="${sy}" x2="${width - padRight}" y2="${sy}"></line>`;
+  }).join("") : "";
+  const bandLabels = isStacked ? selected.map((item, i) => {
+    const ly = (padTop + i * bandH + 12).toFixed(1);
+    return `<text class="band-label" x="${padLeft + 4}" y="${ly}" fill="${item.color}">${escapeHtml(item.label)}</text>`;
+  }).join("") : "";
   const oneBucket = new Set(allPoints.map(p => p.t)).size === 1;
   const lines = selected.map((item, seriesIndex) => {
-    const offset = oneBucket ? (seriesIndex - (selected.length - 1) / 2) * 18 : 0;
+    const offset = oneBucket && !isStacked ? (seriesIndex - (selected.length - 1) / 2) * 18 : 0;
     const coords = item.series.points
-      .map(p => `${(x(new Date(p.t).getTime()) + offset).toFixed(1)},${y(scaledHistoryValue(item, p.value)).toFixed(1)}`)
+      .map(p => `${(x(new Date(p.t).getTime()) + offset).toFixed(1)},${yForSeries(seriesIndex, scaledHistoryValue(item, p.value)).toFixed(1)}`)
       .join(" ");
     const ranges = history.granularity === "fine" ? "" : item.series.points
       .map(p => {
         const cx = x(new Date(p.t).getTime()) + offset;
-        return `<line class="range" stroke="${item.color}" x1="${cx.toFixed(1)}" y1="${y(scaledHistoryValue(item, p.min)).toFixed(1)}" x2="${cx.toFixed(1)}" y2="${y(scaledHistoryValue(item, p.max)).toFixed(1)}"><title>${escapeHtml(item.label)} range · ${fmtPct(p.min)}–${fmtPct(p.max)}${squashFiveHour && isFiveHourSeries(item.key) ? " · displayed ×¼" : ""}</title></line>`;
+        return `<line class="range" stroke="${item.color}" x1="${cx.toFixed(1)}" y1="${yForSeries(seriesIndex, scaledHistoryValue(item, p.min)).toFixed(1)}" x2="${cx.toFixed(1)}" y2="${yForSeries(seriesIndex, scaledHistoryValue(item, p.max)).toFixed(1)}"><title>${escapeHtml(item.label)} range · ${fmtPct(p.min)}–${fmtPct(p.max)}${squashFiveHour && isFiveHourSeries(item.key) ? " · displayed ×¼" : ""}</title></line>`;
       })
       .join("");
     const dotEvery = Math.max(1, Math.ceil(item.series.points.length / 50));
     const expectedCoords = item.series.points
       .filter(p => p.expectedValue != null && Number.isFinite(p.expectedValue))
-      .map(p => `${(x(new Date(p.t).getTime()) + offset).toFixed(1)},${y(scaledHistoryValue(item, p.expectedValue)).toFixed(1)}`)
+      .map(p => `${(x(new Date(p.t).getTime()) + offset).toFixed(1)},${yForSeries(seriesIndex, scaledHistoryValue(item, p.expectedValue)).toFixed(1)}`)
       .join(" ");
     const expectedLine = expectedSeriesKeys.has(item.key) && expectedCoords
       ? `<polyline class="expected-line" stroke="${item.color}" points="${expectedCoords}"><title>${escapeHtml(item.label)} expected usage</title></polyline>`
@@ -614,12 +665,12 @@ function renderHistory(history) {
         const expectedText = p.expectedValue != null ? `\nexpected ${fmtPct(p.expectedValue)}${squashFiveHour && isFiveHourSeries(item.key) ? " (displayed ×¼)" : ""}` : "";
         const squashText = squashFiveHour && isFiveHourSeries(item.key) ? `\ndisplayed average ${fmtPct(scaledHistoryValue(item, p.value))}` : "";
         const tooltip = `${item.label}\n${fmtTime(p.t)}\naverage ${fmtPct(p.value)}${squashText}${expectedText}\nrange ${fmtPct(p.min)}–${fmtPct(p.max)}\n${p.count} sample${p.count === 1 ? "" : "s"}`;
-        return `<circle class="point" fill="${item.color}" stroke="${item.color}" cx="${cx.toFixed(1)}" cy="${y(scaledHistoryValue(item, p.value)).toFixed(1)}" r="3" tabindex="0" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}"><title>${escapeHtml(tooltip)}</title></circle>`;
+        return `<circle class="point" fill="${item.color}" stroke="${item.color}" cx="${cx.toFixed(1)}" cy="${yForSeries(seriesIndex, scaledHistoryValue(item, p.value)).toFixed(1)}" r="3" tabindex="0" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}"><title>${escapeHtml(tooltip)}</title></circle>`;
       })
       .join("");
     return `${ranges}<polyline class="line" stroke="${item.color}" points="${coords}"></polyline>${expectedLine}${dots}`;
   }).join("");
-  const legend = selected.map((item, i) => `
+  const legend = isStacked ? "" : selected.map((item, i) => `
     <g transform="translate(${padLeft + (i % 3) * 250},${14 + Math.floor(i / 3) * 16})">
       <rect width="10" height="10" fill="${item.color}" rx="2"></rect>
       <text x="16" y="10" fill="#8a96a4" font-size="11">${escapeHtml(item.label)}</text>
@@ -629,6 +680,8 @@ function renderHistory(history) {
     ${yTicks}
     <line class="axis" x1="${padLeft}" y1="${height - padBottom}" x2="${width - padRight}" y2="${height - padBottom}"></line>
     <line class="axis" x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${height - padBottom}"></line>
+    ${bandSeparators}
+    ${bandLabels}
     ${legend}
     ${lines}
   `;
@@ -704,6 +757,7 @@ function toggleSeriesMenu() {
 
 historySeriesToggle.addEventListener("click", toggleSeriesMenu);
 historySquashFiveHour.addEventListener("change", () => applySquashFiveHour(historySquashFiveHour.checked));
+historyLayoutSelect.addEventListener("change", () => applyGraphLayout(historyLayoutSelect.value));
 historySeriesMenu.addEventListener("click", (event) => {
   const expectedCheckbox = event.target.closest?.("[data-expected-series-key]");
   if (expectedCheckbox) {
@@ -755,6 +809,7 @@ historyNextWindow.addEventListener("click", () => shiftHistoryWindow(1));
 applyHistoryGranularity(historyGranularity, { fetch: false });
 applyHistoryRange(historyRange, { render: false });
 applySquashFiveHour(squashFiveHour, { render: false });
+applyGraphLayout(graphLayout, { render: false });
 applySelectedView(loadSelectedView(), { fetch: false });
 renderSeriesMenu();
 

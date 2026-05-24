@@ -162,7 +162,7 @@ test("history chart includes readable axes, range bars, and rolling-window help 
 
 test("history chart expected line uses per-point expected values without flat fallback", () => {
   assert.match(html, /p\.expectedValue != null/);
-  assert.match(html, /yForSeries\(seriesIndex, scaledHistoryValue\(item, p\.expectedValue\)\)/);
+  assert.match(html, /seriesY\(scaledHistoryValue\(item, p\.expectedValue\)\)/);
   assert.doesNotMatch(html, /fallbackExpected/);
   assert.doesNotMatch(html, /currentExpectedForSeries/);
 });
@@ -207,14 +207,7 @@ test("dashboard cards link to provider usage pages", () => {
   assert.match(html, /rel="noopener"/);
 });
 
-test("history graph supports overlap and stacked layout toggle", () => {
-  assert.match(html, /id="history-layout"/);
-  assert.match(html, /<option value="overlap">overlap<\/option>/);
-  assert.match(html, /<option value="stacked">stacked<\/option>/);
-  assert.match(html, /localStorage\.getItem\("usage-api:graph-layout"\)/);
-  assert.match(html, /localStorage\.setItem\("usage-api:graph-layout"/);
-  assert.match(html, /function stackedY/);
-  assert.match(html, /class="band-separator"/);
-  assert.match(html, /class="band-label"/);
-  assert.match(html, /graphLayout === "stacked"/);
+test("history graph renders separate per-series graphs", () => {
+  assert.match(html, /function renderOneSeries/);
+  assert.match(html, /selected\.map\(item => renderOneSeries/);
 });

@@ -626,6 +626,10 @@ function renderHistory(history) {
   const yForSeries = (seriesIndex, v) => isStacked
     ? stackedY(seriesIndex, v, padTop, bandH)
     : y(v);
+  const bandTicks = isStacked ? selected.flatMap((_, i) => [100, 50, 0].map(v => {
+    const ty = stackedY(i, v, padTop, bandH);
+    return `<line class="grid-line" x1="${padLeft}" y1="${ty.toFixed(1)}" x2="${width - padRight}" y2="${ty.toFixed(1)}"></line><text x="${padLeft - 8}" y="${(ty + 4).toFixed(1)}" text-anchor="end" fill="#8a96a4" font-size="10">${v}%</text>`;
+  })).join("") : "";
   const yTicks = isStacked ? "" : [100, 75, 50, 25, 0].map(v => `
     <line class="grid-line" x1="${padLeft}" y1="${y(v).toFixed(1)}" x2="${width - padRight}" y2="${y(v).toFixed(1)}"></line>
     <text x="${padLeft - 8}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end" fill="#8a96a4" font-size="11">${v}%</text>
@@ -677,7 +681,7 @@ function renderHistory(history) {
     </g>
   `).join("");
   historyChart.innerHTML = `
-    ${yTicks}
+    ${yTicks}${bandTicks}
     <line class="axis" x1="${padLeft}" y1="${height - padBottom}" x2="${width - padRight}" y2="${height - padBottom}"></line>
     <line class="axis" x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${height - padBottom}"></line>
     ${bandSeparators}

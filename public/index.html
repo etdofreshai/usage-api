@@ -620,7 +620,12 @@ function renderHistory(history) {
       })
       .join("");
     const titleLabel = `<text x="${padLeft + 4}" y="16" fill="${item.color}" font-size="12" font-weight="600">${escapeHtml(item.label)}</text>`;
-    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(item.label)} usage chart">${gridLines}<line class="axis" x1="${padLeft}" y1="${height - padBottom}" x2="${width - padRight}" y2="${height - padBottom}"></line><line class="axis" x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${height - padBottom}"></line>${titleLabel}${ranges}<polyline class="line" stroke="${item.color}" points="${coords}"></polyline>${expectedLine}${dots}</svg>`;
+    const tickCount = 5;
+    const timeTicks = Array.from({ length: tickCount }, (_, i) => {
+      const t = minT + (i / (tickCount - 1)) * (maxT - minT);
+      return `<text x="${x(t).toFixed(1)}" y="${(height - padBottom + 18).toFixed(1)}" text-anchor="middle" fill="#8a96a4" font-size="11">${escapeHtml(fmtTime(new Date(t).toISOString()))}</text>`;
+    }).join("");
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(item.label)} usage chart">${gridLines}<line class="axis" x1="${padLeft}" y1="${height - padBottom}" x2="${width - padRight}" y2="${height - padBottom}"></line><line class="axis" x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${height - padBottom}"></line>${titleLabel}${ranges}<polyline class="line" stroke="${item.color}" points="${coords}"></polyline>${expectedLine}${dots}${timeTicks}</svg>`;
   }
 
   historyChartContainer.innerHTML = selected.map(item => renderOneSeries(item)).join("");

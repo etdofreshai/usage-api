@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
@@ -54,13 +55,33 @@ const ZAI_KEY = process.env.ZAI_API_KEY ?? process.env.ZAI_TOKEN;
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY ?? process.env.OPENROUTER_TOKEN;
 const OPENAI_KEY = process.env.OPENAI_ADMIN_KEY; // requires sk-admin-* — keep explicit
 
+// Optional second Claude account. An explicit CLAUDE2_CREDENTIALS_PATH always
+// enables the poller (so a bad path surfaces as a visible error); otherwise it
+// is enabled only when the default credentials file exists. Resolved here, in
+// body code, so the path can come from the shared env file loaded above.
+const CLAUDE2_PATH = process.env.CLAUDE2_CREDENTIALS_PATH?.trim() || undefined;
+const CLAUDE2_DEFAULT_PATH = path.join(homedir(), ".claude2", ".credentials.json");
+const CLAUDE2_CANDIDATE = CLAUDE2_PATH ?? (await fs.access(CLAUDE2_DEFAULT_PATH).then(() => CLAUDE2_DEFAULT_PATH, () => null));
+// Refuse to point both accounts at one file: concurrent token refreshes would
+// clobber each other's rotated refresh tokens.
+const CLAUDE1_CREDS_PATH = process.env.CLAUDE_CREDENTIALS_PATH ?? path.join(homedir(), ".claude", ".credentials.json");
+const CLAUDE2_SAME_AS_1 = CLAUDE2_CANDIDATE != null && path.resolve(CLAUDE2_CANDIDATE) === path.resolve(CLAUDE1_CREDS_PATH);
+const CLAUDE2_CREDS_PATH = CLAUDE2_SAME_AS_1 ? null : CLAUDE2_CANDIDATE;
+console.log(CLAUDE2_SAME_AS_1
+  ? `claude2 disabled: CLAUDE2_CREDENTIALS_PATH resolves to account 1's credentials file (${CLAUDE2_CANDIDATE})`
+  : CLAUDE2_CREDS_PATH
+    ? `claude2 enabled (credentials: ${CLAUDE2_CREDS_PATH})`
+    : `claude2 disabled (CLAUDE2_CREDENTIALS_PATH unset, no file at ${CLAUDE2_DEFAULT_PATH})`);
+
 const claude = new Poller("claude", fetchClaudeUsage, remember("claude"));
+const claude2 = CLAUDE2_CREDS_PATH ? new Poller("claude2", () => fetchClaudeUsage(CLAUDE2_CREDS_PATH), remember("claude2")) : null;
 const codex = new Poller("codex", fetchCodexUsage, remember("codex"));
 const zai = ZAI_KEY ? new Poller("zai", () => fetchZaiUsage(ZAI_KEY), remember("zai")) : null;
 const openrouter = OPENROUTER_KEY ? new Poller("openrouter", () => fetchOpenRouterUsage(OPENROUTER_KEY), remember("openrouter")) : null;
 const openai = OPENAI_KEY ? new Poller("openai", () => fetchOpenAiUsage(OPENAI_KEY), remember("openai")) : null;
 
 claude.start();
+claude2?.start();
 codex.start();
 zai?.start();
 openrouter?.start();
@@ -144,22 +165,22 @@ function enrichZai(snap: { data?: any }) {
 }
 
 function enrichProviderData(provider: string, data: unknown): unknown {
-  if (provider === "claude") return enrichClaude({ data }).data;
+  if (provider === "claude" || provider === "claude2") return enrichClaude({ data }).data;
   if (provider === "codex") return enrichCodex({ data }).data;
   if (provider === "zai") return enrichZai({ data }).data;
   return data;
 }
 
 app.get("/api/usage", (_req, res) => {
+  const providers: Record<string, unknown> = { claude: enrichClaude(claude.snapshot()) };
+  if (claude2) providers.claude2 = enrichClaude(claude2.snapshot());
+  providers.codex = enrichCodex(codex.snapshot());
+  providers.zai = zai ? enrichZai(zai.snapshot()) : { data: null, error: "ZAI_API_KEY not set" };
+  providers.openrouter = openrouter?.snapshot() ?? { data: null, error: "OPENROUTER_API_KEY not set" };
+  providers.openai = openai?.snapshot() ?? { data: null, error: "OPENAI_ADMIN_KEY not set" };
   res.json({
     timestamp: new Date().toISOString(),
-    providers: {
-      claude: enrichClaude(claude.snapshot()),
-      codex: enrichCodex(codex.snapshot()),
-      zai: zai ? enrichZai(zai.snapshot()) : { data: null, error: "ZAI_API_KEY not set" },
-      openrouter: openrouter?.snapshot() ?? { data: null, error: "OPENROUTER_API_KEY not set" },
-      openai: openai?.snapshot() ?? { data: null, error: "OPENAI_ADMIN_KEY not set" },
-    },
+    providers,
   });
 });
 

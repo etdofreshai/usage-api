@@ -36,21 +36,37 @@ API keys load from the shared `/home/node/workspace/.env` (same volume as
 | Provider     | Source                                                  |
 |--------------|---------------------------------------------------------|
 | Claude Max   | `~/.claude/.credentials.json` (OAuth, auto-refreshes)   |
+| Claude Max #2 (optional) | `~/.claude2/.credentials.json` (OAuth, auto-refreshes) |
 | Codex        | `~/.codex/auth.json` (OAuth, refreshes on 401)          |
 | Z.ai         | `ZAI_API_KEY` env                                       |
 | OpenRouter   | `OPENROUTER_API_KEY` env                                |
 | OpenAI       | `OPENAI_ADMIN_KEY` env                                  |
 
-The two OAuth credential files are mounted from the host — same as `ai-sessions`:
+The OAuth credential files are mounted from the host — same as `ai-sessions`:
 
 ```
 -v $HOME/.claude:/home/node/.claude
+-v $HOME/.claude2:/home/node/.claude2
 -v $HOME/.codex:/home/node/.codex
 ```
 
 This is a deliberate share: when `ai-sessions` (or anything else on the host)
 refreshes the token, `usage-api` sees it on the next read; vice versa. Token
 files are atomically rewritten via `tmp + rename`.
+
+### Second Claude account
+
+A second Claude account is opt-in. At startup the server checks
+`~/.claude2/.credentials.json` (override with `CLAUDE2_CREDENTIALS_PATH`):
+
+- File exists (or env var set) → a `claude2` poller runs and `/api/usage`
+  includes a `claude2` key right after `claude`, same shape. The dashboard
+  shows a "claude #2" card and "Claude #2 …" history series.
+- Unconfigured → the `claude2` key is entirely absent from the response (not
+  null, not an error) and nothing about a second account appears in the UI.
+- `CLAUDE2_CREDENTIALS_PATH` explicitly set → the key is always present, so a
+  bad path/mount surfaces as a visible error entry instead of silently
+  disappearing.
 
 ## Run locally
 
@@ -65,4 +81,5 @@ curl http://localhost:3000/api/usage
 
 App: `usage-api`
 Domain: `usage.etdofresh.com`
-Volumes: same `~/.claude` and `~/.codex` host paths used by `ai-sessions`.
+Volumes: same `~/.claude` and `~/.codex` host paths used by `ai-sessions`,
+plus `~/.claude2` when the second Claude account is enabled.

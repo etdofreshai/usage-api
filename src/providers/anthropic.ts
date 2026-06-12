@@ -1,7 +1,8 @@
 /**
  * Claude Max usage via the OAuth endpoint.
  *
- * Reads ~/.claude/.credentials.json (mounted from host, shared with ai-sessions).
+ * Reads a credentials file — default ~/.claude/.credentials.json (mounted from
+ * host, shared with ai-sessions); pass a path to poll another account.
  * Refreshes the access token in-place when it's within 5 min of expiry.
  *
  * Endpoint: GET https://api.anthropic.com/api/oauth/usage
@@ -19,7 +20,7 @@ const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const USER_AGENT = "usage-api/1.0";
 const EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
-const CREDS_PATH = process.env.CLAUDE_CREDENTIALS_PATH
+const DEFAULT_CREDS_PATH = process.env.CLAUDE_CREDENTIALS_PATH
   ?? path.join(homedir(), ".claude", ".credentials.json");
 
 interface OauthState {
@@ -55,9 +56,9 @@ export interface ClaudeUsage {
   subscription_type: string | null;
 }
 
-async function readCreds(): Promise<OauthState | null> {
+async function readCreds(credsPath: string): Promise<OauthState | null> {
   try {
-    const raw = await fs.readFile(CREDS_PATH, "utf8");
+    const raw = await fs.readFile(credsPath, "utf8");
     const parsed = JSON.parse(raw) as CredsFile;
     const oauth = parsed.claudeAiOauth;
     if (!oauth?.accessToken) return null;
@@ -79,10 +80,10 @@ async function readCreds(): Promise<OauthState | null> {
   }
 }
 
-async function writeCreds(state: OauthState): Promise<void> {
+async function writeCreds(state: OauthState, credsPath: string): Promise<void> {
   let existing: CredsFile = {};
   try {
-    existing = JSON.parse(await fs.readFile(CREDS_PATH, "utf8"));
+    existing = JSON.parse(await fs.readFile(credsPath, "utf8"));
   } catch {}
   const merged: CredsFile = {
     ...existing,
@@ -94,12 +95,12 @@ async function writeCreds(state: OauthState): Promise<void> {
       scopes: state.scopes ?? existing.claudeAiOauth?.scopes,
     },
   };
-  const tmp = `${CREDS_PATH}.tmp`;
+  const tmp = `${credsPath}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(merged, null, 2), { mode: 0o600 });
-  await fs.rename(tmp, CREDS_PATH);
+  await fs.rename(tmp, credsPath);
 }
 
-async function refreshIfNeeded(state: OauthState): Promise<OauthState> {
+async function refreshIfNeeded(state: OauthState, credsPath: string): Promise<OauthState> {
   if (!state.refreshToken) return state;
   if (state.expiresAt && state.expiresAt - EXPIRY_BUFFER_MS > Date.now()) return state;
 
@@ -135,14 +136,14 @@ async function refreshIfNeeded(state: OauthState): Promise<OauthState> {
     scopes: json.scope ? json.scope.split(" ") : state.scopes,
     subscriptionType: state.subscriptionType,
   };
-  await writeCreds(refreshed);
+  await writeCreds(refreshed, credsPath);
   return refreshed;
 }
 
-export async function fetchClaudeUsage(): Promise<ClaudeUsage> {
-  const state = await readCreds();
-  if (!state) throw new Error(`no claude credentials at ${CREDS_PATH}`);
-  const fresh = await refreshIfNeeded(state);
+export async function fetchClaudeUsage(credsPath: string = DEFAULT_CREDS_PATH): Promise<ClaudeUsage> {
+  const state = await readCreds(credsPath);
+  if (!state) throw new Error(`no claude credentials at ${credsPath}`);
+  const fresh = await refreshIfNeeded(state, credsPath);
 
   const res = await fetch(USAGE_URL, {
     headers: {

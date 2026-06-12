@@ -69,6 +69,11 @@ test("history graph exposes all known provider series with preferred color famil
     { key: "codex:GPT-5.3-Codex-Spark secondary", label: "Codex Spark 7-day", color: "#67e8f9", default: false },
     { key: "zai:five_hour", label: "ZAI 5-hour", color: "#a855f7", default: true },
     { key: "zai:monthly", label: "ZAI monthly", color: "#d8b4fe", default: false },
+    { key: "claude2:five_hour", label: "Claude #2 Code 5-hour", color: "#f59e0b", default: false },
+    { key: "claude2:seven_day", label: "Claude #2 Code 7-day", color: "#fbbf24", default: false },
+    { key: "claude2:seven_day_sonnet", label: "Claude #2 Sonnet 7-day", color: "#fcd34d", default: false },
+    { key: "claude2:seven_day_opus", label: "Claude #2 Opus 7-day", color: "#d97706", default: false },
+    { key: "claude2:seven_day_design", label: "Claude #2 Design 7-day", color: "#fde68a", default: false },
   ]);
   assert.match(html, /id="history-series-menu"/);
   assert.match(html, /selectedSeriesKeys\.has/);

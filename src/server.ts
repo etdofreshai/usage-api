@@ -55,23 +55,30 @@ const ZAI_KEY = process.env.ZAI_API_KEY ?? process.env.ZAI_TOKEN;
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY ?? process.env.OPENROUTER_TOKEN;
 const OPENAI_KEY = process.env.OPENAI_ADMIN_KEY; // requires sk-admin-* — keep explicit
 
-// Optional second Claude account. An explicit CLAUDE2_CREDENTIALS_PATH always
-// enables the poller (so a bad path surfaces as a visible error); otherwise it
-// is enabled only when the default credentials file exists. Resolved here, in
-// body code, so the path can come from the shared env file loaded above.
+// Optional second Claude account. CLAUDE2_ENABLED=false (or 0/no/off) is a hard
+// kill switch that disables it regardless of any credentials file. Otherwise an
+// explicit CLAUDE2_CREDENTIALS_PATH always enables the poller (so a bad path
+// surfaces as a visible error); failing that it is enabled only when the default
+// credentials file exists. Resolved here, in body code, so the values can come
+// from the shared env file loaded above.
+const CLAUDE2_OFF = /^(0|false|no|off)$/i.test((process.env.CLAUDE2_ENABLED ?? "").trim());
 const CLAUDE2_PATH = process.env.CLAUDE2_CREDENTIALS_PATH?.trim() || undefined;
 const CLAUDE2_DEFAULT_PATH = path.join(homedir(), ".claude2", ".credentials.json");
-const CLAUDE2_CANDIDATE = CLAUDE2_PATH ?? (await fs.access(CLAUDE2_DEFAULT_PATH).then(() => CLAUDE2_DEFAULT_PATH, () => null));
+const CLAUDE2_CANDIDATE = CLAUDE2_OFF
+  ? null
+  : (CLAUDE2_PATH ?? (await fs.access(CLAUDE2_DEFAULT_PATH).then(() => CLAUDE2_DEFAULT_PATH, () => null)));
 // Refuse to point both accounts at one file: concurrent token refreshes would
 // clobber each other's rotated refresh tokens.
 const CLAUDE1_CREDS_PATH = process.env.CLAUDE_CREDENTIALS_PATH ?? path.join(homedir(), ".claude", ".credentials.json");
 const CLAUDE2_SAME_AS_1 = CLAUDE2_CANDIDATE != null && path.resolve(CLAUDE2_CANDIDATE) === path.resolve(CLAUDE1_CREDS_PATH);
 const CLAUDE2_CREDS_PATH = CLAUDE2_SAME_AS_1 ? null : CLAUDE2_CANDIDATE;
-console.log(CLAUDE2_SAME_AS_1
-  ? `claude2 disabled: CLAUDE2_CREDENTIALS_PATH resolves to account 1's credentials file (${CLAUDE2_CANDIDATE})`
-  : CLAUDE2_CREDS_PATH
-    ? `claude2 enabled (credentials: ${CLAUDE2_CREDS_PATH})`
-    : `claude2 disabled (CLAUDE2_CREDENTIALS_PATH unset, no file at ${CLAUDE2_DEFAULT_PATH})`);
+console.log(CLAUDE2_OFF
+  ? "claude2 disabled (CLAUDE2_ENABLED=false)"
+  : CLAUDE2_SAME_AS_1
+    ? `claude2 disabled: CLAUDE2_CREDENTIALS_PATH resolves to account 1's credentials file (${CLAUDE2_CANDIDATE})`
+    : CLAUDE2_CREDS_PATH
+      ? `claude2 enabled (credentials: ${CLAUDE2_CREDS_PATH})`
+      : `claude2 disabled (CLAUDE2_CREDENTIALS_PATH unset, no file at ${CLAUDE2_DEFAULT_PATH})`);
 
 const claude = new Poller("claude", fetchClaudeUsage, remember("claude"));
 const claude2 = CLAUDE2_CREDS_PATH ? new Poller("claude2", () => fetchClaudeUsage(CLAUDE2_CREDS_PATH), remember("claude2")) : null;

@@ -67,6 +67,9 @@ A second Claude account is opt-in. At startup the server checks
 - `CLAUDE2_CREDENTIALS_PATH` explicitly set → the key is always present, so a
   bad path/mount surfaces as a visible error entry instead of silently
   disappearing.
+- `CLAUDE2_ENABLED=false` (or `0`/`no`/`off`) → hard kill switch: the account is
+  fully disabled and absent even when its credentials file exists. Use this to
+  turn the second account off from the environment without removing the file.
 
 ## Run locally
 

@@ -29,20 +29,22 @@ Each provider runs an independent `Poller`:
 
 ## Auth
 
-API keys load from the shared `/home/node/workspace/.env` (same volume as
-`ai-sessions`) on startup. Override the path with `SHARED_ENV_FILE`. Existing
-`process.env` values win, so Dokploy env vars still override the file.
+API keys load from the shared `/home/node/workspace/.env` on startup. Override
+the path with `SHARED_ENV_FILE`. Existing `process.env` values win, so Dokploy
+env vars still override the file.
 
 | Provider     | Source                                                  |
 |--------------|---------------------------------------------------------|
-| Claude Max   | `~/.claude/.credentials.json` (OAuth, auto-refreshes)   |
-| Claude Max #2 (optional) | `~/.claude2/.credentials.json` (OAuth, auto-refreshes) |
-| Codex        | `~/.codex/auth.json` (OAuth, refreshes on 401)          |
+| Claude Max   | `/home/node/auth/.claude/.credentials.json` (OAuth, auto-refreshes)   |
+| Claude Max #2 (optional) | `/home/node/auth/.claude2/.credentials.json` (OAuth, auto-refreshes) |
+| Codex        | `/home/node/auth/.codex/auth.json` (OAuth, refreshes on 401)          |
 | Z.ai         | `ZAI_API_KEY` env                                       |
 | OpenRouter   | `OPENROUTER_API_KEY` env                                |
 | OpenAI       | `OPENAI_ADMIN_KEY` env                                  |
 
-The OAuth credential files are mounted from the host — same as `ai-sessions`:
+OAuth credentials live in the dedicated `usage-api-auth` Docker volume mounted
+at `/home/node/auth`. During migration, the entrypoint seeds an empty volume
+from the former `ai-sessions-date` bind mounts:
 
 ```
 -v $HOME/.claude:/home/node/.claude
@@ -50,9 +52,8 @@ The OAuth credential files are mounted from the host — same as `ai-sessions`:
 -v $HOME/.codex:/home/node/.codex
 ```
 
-This is a deliberate share: when `ai-sessions` (or anything else on the host)
-refreshes the token, `usage-api` sees it on the next read; vice versa. Token
-files are atomically rewritten via `tmp + rename`.
+After the initial copy, Usage API refreshes and atomically rewrites its own
+credential files without sharing token state with other containers.
 
 ### Second Claude account
 
@@ -84,5 +85,7 @@ curl http://localhost:3000/api/usage
 
 App: `usage-api`
 Domain: `usage.etdofresh.com`
-Volumes: same `~/.claude` and `~/.codex` host paths used by `ai-sessions`,
-plus `~/.claude2` when the second Claude account is enabled.
+Named volumes:
+
+- `usage-api-auth` mounted at `/home/node/auth` for OAuth credentials
+- `usage-api-data` mounted at `/home/node/data` for usage history

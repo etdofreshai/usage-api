@@ -128,6 +128,7 @@ function enrichClaude(snap: { data?: any }) {
       seven_day_sonnet: enrichSeven(d.seven_day_sonnet),
       seven_day_opus: enrichSeven(d.seven_day_opus),
       seven_day_design: enrichSeven(d.seven_day_design),
+      seven_day_fable: enrichSeven(d.seven_day_fable),
     },
   };
 }

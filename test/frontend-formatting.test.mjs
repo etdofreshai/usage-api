@@ -63,6 +63,7 @@ test("history graph exposes all known provider series with preferred color famil
     { key: "claude:seven_day_sonnet", label: "Claude Sonnet 7-day", color: "#fdba74", default: false },
     { key: "claude:seven_day_opus", label: "Claude Opus 7-day", color: "#ea580c", default: false },
     { key: "claude:seven_day_design", label: "Claude Design 7-day", color: "#fed7aa", default: false },
+    { key: "claude:seven_day_fable", label: "Claude Fable 7-day", color: "#c2410c", default: true },
     { key: "codex:primary", label: "Codex 5-hour", color: "#22c55e", default: true },
     { key: "codex:secondary", label: "Codex 7-day", color: "#86efac", default: true },
     { key: "codex:GPT-5.3-Codex-Spark primary", label: "Codex Spark 5-hour", color: "#06b6d4", default: false },
@@ -74,6 +75,7 @@ test("history graph exposes all known provider series with preferred color famil
     { key: "claude2:seven_day_sonnet", label: "Claude #2 Sonnet 7-day", color: "#fcd34d", default: false },
     { key: "claude2:seven_day_opus", label: "Claude #2 Opus 7-day", color: "#d97706", default: false },
     { key: "claude2:seven_day_design", label: "Claude #2 Design 7-day", color: "#fde68a", default: false },
+    { key: "claude2:seven_day_fable", label: "Claude #2 Fable 7-day", color: "#b45309", default: false },
   ]);
   assert.match(html, /id="history-series-menu"/);
   assert.match(html, /selectedSeriesKeys\.has/);

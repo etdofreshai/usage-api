@@ -53,7 +53,65 @@ export interface ClaudeUsage {
   seven_day_opus: ClaudeWindow | null;
   // "Claude Design" in the web UI; the API ships it under the `omelette` codename.
   seven_day_design: ClaudeWindow | null;
+  // Per-model weekly limit from the newer `limits[]` array (scope.model "Fable").
+  seven_day_fable: ClaudeWindow | null;
   subscription_type: string | null;
+}
+
+// Newer responses carry per-model usage in a `limits` array instead of the
+// legacy `seven_day_<model>` fields (which now come back null): entries with
+// kind "weekly_scoped" scope a weekly window to one model via
+// scope.model.display_name (e.g. "Fable").
+interface RawLimit {
+  kind?: string;
+  group?: string;
+  percent?: number;
+  resets_at?: string;
+  is_active?: boolean;
+  scope?: { model?: { display_name?: string | null } | null } | null;
+}
+
+type RawWindow = { utilization?: number; resets_at?: string } | null;
+
+export interface RawUsageResponse {
+  five_hour?: RawWindow;
+  seven_day?: RawWindow;
+  seven_day_sonnet?: RawWindow;
+  seven_day_opus?: RawWindow;
+  seven_day_omelette?: RawWindow;
+  limits?: RawLimit[];
+}
+
+export function parseClaudeUsage(json: RawUsageResponse, subscriptionType: string | null): ClaudeUsage {
+  const win = (w: RawWindow): ClaudeWindow => ({
+    utilization: w?.utilization ?? 0,
+    resets_at: w?.resets_at ?? null,
+  });
+  const optWin = (w: RawWindow): ClaudeWindow | null => (w ? win(w) : null);
+
+  // Model-scoped weekly windows, keyed by lowercased display name.
+  const scoped = new Map<string, ClaudeWindow>();
+  for (const limit of json.limits ?? []) {
+    if (limit?.kind !== "weekly_scoped") continue;
+    if (typeof limit.percent !== "number") continue;
+    const name = limit.scope?.model?.display_name;
+    if (typeof name !== "string" || !name) continue;
+    scoped.set(name.toLowerCase(), {
+      utilization: limit.percent,
+      resets_at: limit.resets_at ?? null,
+    });
+  }
+
+  return {
+    five_hour: win(json.five_hour ?? null),
+    seven_day: win(json.seven_day ?? null),
+    seven_day_sonnet: optWin(json.seven_day_sonnet ?? null) ?? scoped.get("sonnet") ?? null,
+    seven_day_opus: optWin(json.seven_day_opus ?? null) ?? scoped.get("opus") ?? null,
+    seven_day_design: optWin(json.seven_day_omelette ?? null)
+      ?? scoped.get("claude design") ?? scoped.get("design") ?? null,
+    seven_day_fable: scoped.get("fable") ?? null,
+    subscription_type: subscriptionType,
+  };
 }
 
 async function readCreds(credsPath: string): Promise<OauthState | null> {
@@ -159,25 +217,6 @@ export async function fetchClaudeUsage(credsPath: string = DEFAULT_CREDS_PATH): 
   if (!res.ok) {
     throw new Error(`claude usage HTTP ${res.status} ${await res.text().catch(() => "")}`);
   }
-  type RawWindow = { utilization?: number; resets_at?: string } | null;
-  const json = (await res.json()) as {
-    five_hour?: RawWindow;
-    seven_day?: RawWindow;
-    seven_day_sonnet?: RawWindow;
-    seven_day_opus?: RawWindow;
-    seven_day_omelette?: RawWindow;
-  };
-  const win = (w: RawWindow): ClaudeWindow => ({
-    utilization: w?.utilization ?? 0,
-    resets_at: w?.resets_at ?? null,
-  });
-  const optWin = (w: RawWindow): ClaudeWindow | null => (w ? win(w) : null);
-  return {
-    five_hour: win(json.five_hour ?? null),
-    seven_day: win(json.seven_day ?? null),
-    seven_day_sonnet: optWin(json.seven_day_sonnet ?? null),
-    seven_day_opus: optWin(json.seven_day_opus ?? null),
-    seven_day_design: optWin(json.seven_day_omelette ?? null),
-    subscription_type: fresh.subscriptionType ?? null,
-  };
+  const json = (await res.json()) as RawUsageResponse;
+  return parseClaudeUsage(json, fresh.subscriptionType ?? null);
 }

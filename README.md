@@ -90,14 +90,10 @@ Named volumes:
 - `usage-api-auth` mounted at `/home/node/auth` for OAuth credentials
 - `usage-api-data` mounted at `/home/node/data` for usage history
 
-### Usage Auth CLI companion
+### Renew OAuth credentials
 
-The `Usage Auth CLI` Dokploy application builds from `Dockerfile.auth-cli` and
-mounts the existing `usage-api-auth` volume at `/home/node`. It runs as the
-same UID as Usage API so refreshed credential files remain readable and
-writable by both containers. It has no public domain.
-
-Open its Dokploy terminal and use:
+The main Usage API image includes the Claude and Codex CLIs. Open the Usage API
+application's Dokploy terminal and use:
 
 ```sh
 usage-auth status
@@ -106,4 +102,5 @@ usage-auth claude2
 usage-auth codex
 ```
 
-The Codex helper uses device-code authentication for the headless container.
+The helper reads and writes the existing `usage-api-auth` volume. The Codex
+command uses device-code authentication for the headless container.

@@ -1,7 +1,19 @@
 FROM node:22-slim
 
+ARG CODEX_VERSION=0.144.1
+ARG CLAUDE_CODE_VERSION=2.1.207
+
 WORKDIR /app
 RUN chown node:node /app
+
+# Keep the authentication CLIs in the main service so its Dokploy terminal can
+# renew the same credential volume the API reads.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl less \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g \
+      "@openai/codex@${CODEX_VERSION}" \
+      "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 
 # Persistent data directory for history (created as root before USER node)
 RUN mkdir -p /home/node/data && chown node:node /home/node/data
@@ -13,7 +25,8 @@ RUN mkdir -p /home/node/auth && chown node:node /home/node/auth
 VOLUME /home/node/auth
 
 COPY scripts/docker-entrypoint.sh /usr/local/bin/usage-api-entrypoint
-RUN chmod 755 /usr/local/bin/usage-api-entrypoint
+COPY scripts/usage-auth.sh /usr/local/bin/usage-auth
+RUN chmod 755 /usr/local/bin/usage-api-entrypoint /usr/local/bin/usage-auth
 
 USER node
 

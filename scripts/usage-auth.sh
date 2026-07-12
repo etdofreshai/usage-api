@@ -1,6 +1,11 @@
 #!/bin/sh
 set -eu
 
+auth_root="${USAGE_AUTH_ROOT:-/home/node/auth}"
+claude_dir="$auth_root/.claude"
+claude2_dir="$auth_root/.claude2"
+codex_dir="$auth_root/.codex"
+
 usage() {
   cat <<'EOF'
 Usage: usage-auth <status|claude|claude2|codex>
@@ -15,20 +20,22 @@ EOF
 case "${1:-}" in
   status)
     printf '%s\n' 'Claude:'
-    claude auth status --text || true
+    CLAUDE_CONFIG_DIR="$claude_dir" claude auth status --text || true
     printf '\n%s\n' 'Claude #2:'
-    CLAUDE_CONFIG_DIR="$HOME/.claude2" claude auth status --text || true
+    CLAUDE_CONFIG_DIR="$claude2_dir" claude auth status --text || true
     printf '\n%s\n' 'Codex:'
-    codex login status || true
+    CODEX_HOME="$codex_dir" codex login status || true
     ;;
   claude)
+    export CLAUDE_CONFIG_DIR="$claude_dir"
     exec claude auth login --claudeai
     ;;
   claude2)
-    export CLAUDE_CONFIG_DIR="$HOME/.claude2"
+    export CLAUDE_CONFIG_DIR="$claude2_dir"
     exec claude auth login --claudeai
     ;;
   codex)
+    export CODEX_HOME="$codex_dir"
     exec codex login --device-auth
     ;;
   -h|--help|help|'')

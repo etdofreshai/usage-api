@@ -13,6 +13,7 @@ import path from "node:path";
 import { RateLimitError, parseRetryAfter } from "../cache.js";
 
 const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
+const RESET_CREDITS_URL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const USER_AGENT = "codex-cli";
@@ -50,12 +51,56 @@ export interface CodexAdditionalLimit {
   secondary: CodexWindow;
 }
 
+export interface CodexResetCredit {
+  status: string | null;
+  granted_at: string | null;
+  expires_at: string | null;
+}
+
+// "Rate limit reset credits" — free full-reset grants (30-day expiry) listed by
+// GET /backend-api/wham/rate-limit-reset-credits. The wham/usage summary only
+// carries available_count; this block adds per-credit expiry dates.
+export interface CodexResetCredits {
+  available_count: number;
+  // Soonest expires_at among still-available credits ("use it or lose it").
+  next_expires_at: string | null;
+  credits: CodexResetCredit[];
+}
+
 export interface CodexUsage {
   plan_type: string | null;
   primary: CodexWindow;
   secondary: CodexWindow;
   additional: CodexAdditionalLimit[];
   credits_balance: string | null;
+  // null when the reset-credits endpoint is unavailable (best-effort fetch).
+  reset_credits: CodexResetCredits | null;
+}
+
+export interface RawResetCreditsResponse {
+  credits?: Array<{
+    status?: string;
+    granted_at?: string;
+    expires_at?: string;
+  }>;
+  available_count?: number;
+}
+
+export function parseResetCredits(json: RawResetCreditsResponse): CodexResetCredits {
+  const credits: CodexResetCredit[] = (json.credits ?? []).map((c) => ({
+    status: c.status ?? null,
+    granted_at: c.granted_at ?? null,
+    expires_at: c.expires_at ?? null,
+  }));
+  const nextExpiry = credits
+    .filter((c) => c.status === "available" && c.expires_at)
+    .map((c) => c.expires_at as string)
+    .sort()[0] ?? null;
+  return {
+    available_count: json.available_count ?? credits.filter((c) => c.status === "available").length,
+    next_expires_at: nextExpiry,
+    credits,
+  };
 }
 
 async function readAuth(): Promise<CodexAuth | null> {
@@ -108,24 +153,42 @@ async function refresh(refreshToken: string): Promise<string> {
   return json.access_token;
 }
 
-async function callUsage(accessToken: string, accountId: string | undefined): Promise<Response> {
+function authHeaders(accessToken: string, accountId: string | undefined): Record<string, string> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${accessToken}`,
     "User-Agent": USER_AGENT,
     Accept: "application/json",
   };
   if (accountId) headers["ChatGPT-Account-Id"] = accountId;
-  return fetch(USAGE_URL, { headers });
+  return headers;
+}
+
+async function callUsage(accessToken: string, accountId: string | undefined): Promise<Response> {
+  return fetch(USAGE_URL, { headers: authHeaders(accessToken, accountId) });
+}
+
+// Best-effort: reset credits are a nice-to-have, so any failure here must not
+// fail the whole codex poll. (Read-only list endpoint; redeeming is a separate
+// POST .../consume that this service never calls.)
+async function fetchResetCredits(accessToken: string, accountId: string | undefined): Promise<CodexResetCredits | null> {
+  try {
+    const res = await fetch(RESET_CREDITS_URL, { headers: authHeaders(accessToken, accountId) });
+    if (!res.ok) return null;
+    return parseResetCredits((await res.json()) as RawResetCreditsResponse);
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchCodexUsage(): Promise<CodexUsage> {
   const auth = await readAuth();
   if (!auth) throw new Error(`no codex auth at ${AUTH_PATH}`);
 
-  let res = await callUsage(auth.accessToken, auth.accountId);
+  let accessToken = auth.accessToken;
+  let res = await callUsage(accessToken, auth.accountId);
   if (res.status === 401 && auth.refreshToken) {
-    const newToken = await refresh(auth.refreshToken);
-    res = await callUsage(newToken, auth.accountId);
+    accessToken = await refresh(auth.refreshToken);
+    res = await callUsage(accessToken, auth.accountId);
   }
   if (res.status === 429) {
     throw new RateLimitError(parseRetryAfter(res.headers.get("retry-after")) || 60);
@@ -162,5 +225,6 @@ export async function fetchCodexUsage(): Promise<CodexUsage> {
     secondary: parseWin(json.rate_limit?.secondary_window),
     additional,
     credits_balance: json.credits?.unlimited ? "unlimited" : json.credits?.balance ?? null,
+    reset_credits: await fetchResetCredits(accessToken, auth.accountId),
   };
 }

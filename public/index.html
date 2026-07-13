@@ -255,10 +255,16 @@ function renderCodex(snap) {
     ${metricRow("primary", a.primary?.used_percent, a.primary?.expected_percent, a.primary?.resets_at)}
     ${metricRow("secondary", a.secondary?.used_percent, a.secondary?.expected_percent, a.secondary?.resets_at)}
   `).join("");
+  const rc = d.reset_credits;
+  const resetCredits = rc && rc.available_count > 0 ? `
+    <div class="sub">↻ ${rc.available_count} full reset${rc.available_count === 1 ? "" : "s"} available${
+      rc.next_expires_at ? ` · next expires ${fmtRel(rc.next_expires_at)} (${fmtTime(rc.next_expires_at)})` : ""}</div>
+  ` : "";
   return `
     ${metricRow("primary", d.primary?.used_percent, d.primary?.expected_percent, d.primary?.resets_at)}
     ${metricRow("secondary", d.secondary?.used_percent, d.secondary?.expected_percent, d.secondary?.resets_at)}
     ${extras}
+    ${resetCredits}
   `;
 }
 function renderZai(snap) {

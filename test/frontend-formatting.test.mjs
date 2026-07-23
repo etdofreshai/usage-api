@@ -64,10 +64,10 @@ test("history graph exposes all known provider series with preferred color famil
     { key: "claude:seven_day_opus", label: "Claude Opus 7-day", color: "#ea580c", default: false },
     { key: "claude:seven_day_design", label: "Claude Design 7-day", color: "#fed7aa", default: false },
     { key: "claude:seven_day_fable", label: "Claude Fable 7-day", color: "#c2410c", default: true },
-    { key: "codex:primary", label: "Codex 5-hour", color: "#22c55e", default: true },
-    { key: "codex:secondary", label: "Codex 7-day", color: "#86efac", default: true },
-    { key: "codex:GPT-5.3-Codex-Spark primary", label: "Codex Spark 5-hour", color: "#06b6d4", default: false },
-    { key: "codex:GPT-5.3-Codex-Spark secondary", label: "Codex Spark 7-day", color: "#67e8f9", default: false },
+    { key: "codex:five_hour", label: "Codex 5-hour", color: "#22c55e", default: false },
+    { key: "codex:seven_day", label: "Codex 7-day", color: "#86efac", default: true },
+    { key: "codex:GPT-5.3-Codex-Spark five_hour", label: "Codex Spark 5-hour", color: "#06b6d4", default: false },
+    { key: "codex:GPT-5.3-Codex-Spark seven_day", label: "Codex Spark 7-day", color: "#67e8f9", default: false },
     { key: "zai:five_hour", label: "ZAI 5-hour", color: "#a855f7", default: true },
     { key: "zai:monthly", label: "ZAI monthly", color: "#d8b4fe", default: false },
     { key: "claude2:five_hour", label: "Claude #2 Code 5-hour", color: "#f59e0b", default: false },
@@ -202,6 +202,13 @@ test("history chart removes short zero dropouts without hiding real reset ramps"
     { t: t(4), value: 3 },
   ];
   assert.deepEqual([...cleanedHistoryPoints(realReset).map((p) => p.value)], [95, 0, 1, 2, 3]);
+});
+
+test("Codex card omits unavailable 5-hour metrics and explains the reporting gap", () => {
+  assert.match(html, /windowRow\("5-hour", d\.five_hour\)/);
+  assert.match(html, /windowRow\("7-day", d\.seven_day\)/);
+  assert.match(html, /5-hour limit is not currently reported by Codex/);
+  assert.doesNotMatch(html, /metricRow\("primary", d\.primary/);
 });
 
 test("dashboard cards link to provider usage pages", () => {

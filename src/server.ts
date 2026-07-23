@@ -47,7 +47,22 @@ const history = new HistoryStore({ retentionMs: HISTORY_RETENTION_MS, filePath: 
 await history.load();
 
 function remember<T>(provider: string): (data: T, fetchedAt: Date) => void {
-  return (data: T, fetchedAt: Date) => history.recordProvider(provider, enrichProviderData(provider, data), fetchedAt);
+  return (data: T, fetchedAt: Date) => {
+    const enriched = enrichProviderData(provider, data);
+    if (provider !== "codex" || !enriched || typeof enriched !== "object") {
+      history.recordProvider(provider, enriched, fetchedAt);
+      return;
+    }
+    // Codex retains primary/secondary as compatibility aliases in /api/usage.
+    // Do not duplicate those same values in history alongside the canonical
+    // five_hour/seven_day series.
+    const { primary: _primary, secondary: _secondary, ...codexData } = enriched as any;
+    codexData.additional = (codexData.additional ?? []).map((a: any) => {
+      const { primary: _p, secondary: _s, ...rest } = a;
+      return rest;
+    });
+    history.recordProvider(provider, codexData, fetchedAt);
+  };
 }
 
 // Accept the workspace .env's existing names as fallbacks.
@@ -136,21 +151,34 @@ function enrichClaude(snap: { data?: any }) {
 function enrichCodex(snap: { data?: any }) {
   if (!snap.data) return snap;
   const d = snap.data;
-  const enrichWin = (w: { used_percent: number; resets_at: string | null; window_minutes: number }, fallbackMin: number) => {
+  const enrichWin = (w: { used_percent: number; resets_at: string | null; window_minutes: number } | null, fallbackMin: number) => {
+    if (!w) return null;
     const ms = (w.window_minutes || fallbackMin) * 60 * 1000;
     return { ...w, ...pacing(w.used_percent, w.resets_at, ms) };
   };
+  const fiveHour = enrichWin(d.five_hour, 300);
+  const sevenDay = enrichWin(d.seven_day, 10080);
   return {
     ...snap,
     data: {
       ...d,
-      primary: enrichWin(d.primary, 300),
-      secondary: enrichWin(d.secondary, 10080),
-      additional: d.additional.map((a: any) => ({
-        ...a,
-        primary: enrichWin(a.primary, 300),
-        secondary: enrichWin(a.secondary, 10080),
-      })),
+      five_hour: fiveHour,
+      seven_day: sevenDay,
+      // Preserve the old API fields, but keep their historical semantic
+      // meanings rather than mirroring OpenAI's now-variable raw slots.
+      primary: fiveHour,
+      secondary: sevenDay,
+      additional: d.additional.map((a: any) => {
+        const additionalFiveHour = enrichWin(a.five_hour, 300);
+        const additionalSevenDay = enrichWin(a.seven_day, 10080);
+        return {
+          ...a,
+          five_hour: additionalFiveHour,
+          seven_day: additionalSevenDay,
+          primary: additionalFiveHour,
+          secondary: additionalSevenDay,
+        };
+      }),
     },
   };
 }

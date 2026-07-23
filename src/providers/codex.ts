@@ -6,6 +6,11 @@
  *
  * Endpoint: GET https://chatgpt.com/backend-api/wham/usage
  *   → rate_limit.{primary_window, secondary_window}.{used_percent, reset_at, limit_window_seconds}
+ *
+ * OpenAI's primary/secondary slot names are positional, not semantic. In July
+ * 2026 it temporarily stopped reporting the 5-hour limit and moved the 7-day
+ * limit into primary_window. Classify windows by duration so the public API
+ * continues to report five_hour/seven_day accurately.
  */
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
@@ -47,8 +52,12 @@ export interface CodexWindow {
 export interface CodexAdditionalLimit {
   name: string;
   metered_feature: string | null;
-  primary: CodexWindow;
-  secondary: CodexWindow;
+  five_hour: CodexWindow | null;
+  seven_day: CodexWindow | null;
+  /** @deprecated Compatibility alias for five_hour. */
+  primary: CodexWindow | null;
+  /** @deprecated Compatibility alias for seven_day. */
+  secondary: CodexWindow | null;
 }
 
 export interface CodexResetCredit {
@@ -69,12 +78,30 @@ export interface CodexResetCredits {
 
 export interface CodexUsage {
   plan_type: string | null;
-  primary: CodexWindow;
-  secondary: CodexWindow;
+  five_hour: CodexWindow | null;
+  seven_day: CodexWindow | null;
+  /** @deprecated Compatibility alias for five_hour. */
+  primary: CodexWindow | null;
+  /** @deprecated Compatibility alias for seven_day. */
+  secondary: CodexWindow | null;
   additional: CodexAdditionalLimit[];
   credits_balance: string | null;
   // null when the reset-credits endpoint is unavailable (best-effort fetch).
   reset_credits: CodexResetCredits | null;
+}
+
+type RawWindow = { used_percent?: number; reset_at?: number; limit_window_seconds?: number } | null | undefined;
+type RawRateLimit = { primary_window?: RawWindow; secondary_window?: RawWindow } | null | undefined;
+
+export interface RawCodexUsageResponse {
+  plan_type?: string;
+  rate_limit?: RawRateLimit;
+  additional_rate_limits?: Array<{
+    limit_name?: string;
+    metered_feature?: string;
+    rate_limit?: RawRateLimit;
+  }>;
+  credits?: { unlimited?: boolean; balance?: string };
 }
 
 export interface RawResetCreditsResponse {
@@ -84,6 +111,48 @@ export interface RawResetCreditsResponse {
     expires_at?: string;
   }>;
   available_count?: number;
+}
+
+function parseWindow(w: RawWindow): CodexWindow | null {
+  if (!w || typeof w.used_percent !== "number") return null;
+  return {
+    used_percent: w.used_percent,
+    resets_at: w.reset_at ? new Date(w.reset_at * 1000).toISOString() : null,
+    window_minutes: w.limit_window_seconds ? Math.round(w.limit_window_seconds / 60) : 0,
+  };
+}
+
+function classifyWindows(rateLimit: RawRateLimit): { five_hour: CodexWindow | null; seven_day: CodexWindow | null } {
+  const windows = [parseWindow(rateLimit?.primary_window), parseWindow(rateLimit?.secondary_window)]
+    .filter((w): w is CodexWindow => w !== null);
+  return {
+    // Allow modest server-side duration changes without confusing a short
+    // session window with the weekly window.
+    five_hour: windows.find((w) => w.window_minutes > 0 && w.window_minutes <= 24 * 60) ?? null,
+    seven_day: windows.find((w) => w.window_minutes > 24 * 60) ?? null,
+  };
+}
+
+export function parseCodexUsage(json: RawCodexUsageResponse): Omit<CodexUsage, "reset_credits"> {
+  const windows = classifyWindows(json.rate_limit);
+  const additional: CodexAdditionalLimit[] = (json.additional_rate_limits ?? []).map((a) => {
+    const classified = classifyWindows(a.rate_limit);
+    return {
+      name: a.limit_name ?? "unknown",
+      metered_feature: a.metered_feature ?? null,
+      ...classified,
+      primary: classified.five_hour,
+      secondary: classified.seven_day,
+    };
+  });
+  return {
+    plan_type: json.plan_type ?? null,
+    ...windows,
+    primary: windows.five_hour,
+    secondary: windows.seven_day,
+    additional,
+    credits_balance: json.credits?.unlimited ? "unlimited" : json.credits?.balance ?? null,
+  };
 }
 
 export function parseResetCredits(json: RawResetCreditsResponse): CodexResetCredits {
@@ -196,35 +265,9 @@ export async function fetchCodexUsage(): Promise<CodexUsage> {
   if (!res.ok) {
     throw new Error(`codex usage HTTP ${res.status} ${await res.text().catch(() => "")}`);
   }
-  type RawWindow = { used_percent?: number; reset_at?: number; limit_window_seconds?: number } | undefined;
-  type RawRateLimit = { primary_window?: RawWindow; secondary_window?: RawWindow } | undefined;
-  const json = (await res.json()) as {
-    plan_type?: string;
-    rate_limit?: RawRateLimit;
-    additional_rate_limits?: Array<{
-      limit_name?: string;
-      metered_feature?: string;
-      rate_limit?: RawRateLimit;
-    }>;
-    credits?: { unlimited?: boolean; balance?: string };
-  };
-  const parseWin = (w: RawWindow): CodexWindow => ({
-    used_percent: w?.used_percent ?? 0,
-    resets_at: w?.reset_at ? new Date(w.reset_at * 1000).toISOString() : null,
-    window_minutes: w?.limit_window_seconds ? Math.round(w.limit_window_seconds / 60) : 0,
-  });
-  const additional: CodexAdditionalLimit[] = (json.additional_rate_limits ?? []).map((a) => ({
-    name: a.limit_name ?? "unknown",
-    metered_feature: a.metered_feature ?? null,
-    primary: parseWin(a.rate_limit?.primary_window),
-    secondary: parseWin(a.rate_limit?.secondary_window),
-  }));
+  const parsed = parseCodexUsage((await res.json()) as RawCodexUsageResponse);
   return {
-    plan_type: json.plan_type ?? null,
-    primary: parseWin(json.rate_limit?.primary_window),
-    secondary: parseWin(json.rate_limit?.secondary_window),
-    additional,
-    credits_balance: json.credits?.unlimited ? "unlimited" : json.credits?.balance ?? null,
+    ...parsed,
     reset_credits: await fetchResetCredits(accessToken, auth.accountId),
   };
 }

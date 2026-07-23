@@ -18,6 +18,11 @@ Returns per-provider:
 - `intervalSec` — current polling interval (self-tunes)
 - `nextFetchAt` — when the next refresh fires
 
+Codex usage exposes semantic `five_hour` and `seven_day` windows. Either may be
+`null` when OpenAI is not reporting that limit. The deprecated `primary` and
+`secondary` fields remain as compatibility aliases for `five_hour` and
+`seven_day`; they do not mirror OpenAI's variable raw slot positions.
+
 ## Adaptive polling
 
 Each provider runs an independent `Poller`:

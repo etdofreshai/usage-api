@@ -172,9 +172,9 @@ export function parseResetCredits(json: RawResetCreditsResponse): CodexResetCred
   };
 }
 
-async function readAuth(): Promise<CodexAuth | null> {
+async function readAuth(authPath: string): Promise<CodexAuth | null> {
   try {
-    const raw = await fs.readFile(AUTH_PATH, "utf8");
+    const raw = await fs.readFile(authPath, "utf8");
     const parsed = JSON.parse(raw) as AuthFile;
     const t: AuthTokens = parsed.tokens ?? parsed;
     if (!t?.access_token) return null;
@@ -184,28 +184,30 @@ async function readAuth(): Promise<CodexAuth | null> {
   }
 }
 
-async function writeAccessToken(accessToken: string): Promise<void> {
+async function writeCredentials(authPath: string, accessToken: string, refreshToken?: string): Promise<void> {
   let existing: AuthFile = {};
   try {
-    existing = JSON.parse(await fs.readFile(AUTH_PATH, "utf8"));
+    existing = JSON.parse(await fs.readFile(authPath, "utf8"));
   } catch {}
-  // Preserve whichever layout the file uses on disk.
+  // Preserve whichever layout the file uses on disk and replace both tokens in
+  // one atomic rename. OpenAI rotates refresh tokens, so writing only the
+  // access token leaves the next refresh trying to reuse an invalid token.
   const nested = existing.tokens !== undefined;
   const merged: AuthFile = nested
-    ? { ...existing, tokens: { ...(existing.tokens ?? {}), access_token: accessToken } }
-    : { ...existing, access_token: accessToken };
-  const tmp = `${AUTH_PATH}.tmp`;
+    ? { ...existing, tokens: { ...(existing.tokens ?? {}), access_token: accessToken, ...(refreshToken ? { refresh_token: refreshToken } : {}) } }
+    : { ...existing, access_token: accessToken, ...(refreshToken ? { refresh_token: refreshToken } : {}) };
+  const tmp = `${authPath}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(merged, null, 2), { mode: 0o600 });
-  await fs.rename(tmp, AUTH_PATH);
+  await fs.rename(tmp, authPath);
 }
 
-async function refresh(refreshToken: string): Promise<string> {
+async function refresh(authPath: string, refreshToken: string, fetchImpl: typeof fetch): Promise<string> {
   const body = new URLSearchParams({
     client_id: CLIENT_ID,
     grant_type: "refresh_token",
     refresh_token: refreshToken,
   });
-  const res = await fetch(TOKEN_URL, {
+  const res = await fetchImpl(TOKEN_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -216,9 +218,9 @@ async function refresh(refreshToken: string): Promise<string> {
   if (!res.ok) {
     throw new Error(`codex token refresh failed: HTTP ${res.status} ${await res.text().catch(() => "")}`);
   }
-  const json = (await res.json()) as { access_token?: string };
+  const json = (await res.json()) as { access_token?: string; refresh_token?: string };
   if (!json.access_token) throw new Error("codex token refresh: missing access_token");
-  await writeAccessToken(json.access_token);
+  await writeCredentials(authPath, json.access_token, json.refresh_token);
   return json.access_token;
 }
 
@@ -232,16 +234,16 @@ function authHeaders(accessToken: string, accountId: string | undefined): Record
   return headers;
 }
 
-async function callUsage(accessToken: string, accountId: string | undefined): Promise<Response> {
-  return fetch(USAGE_URL, { headers: authHeaders(accessToken, accountId) });
+async function callUsage(accessToken: string, accountId: string | undefined, fetchImpl: typeof fetch): Promise<Response> {
+  return fetchImpl(USAGE_URL, { headers: authHeaders(accessToken, accountId) });
 }
 
 // Best-effort: reset credits are a nice-to-have, so any failure here must not
 // fail the whole codex poll. (Read-only list endpoint; redeeming is a separate
 // POST .../consume that this service never calls.)
-async function fetchResetCredits(accessToken: string, accountId: string | undefined): Promise<CodexResetCredits | null> {
+async function fetchResetCredits(accessToken: string, accountId: string | undefined, fetchImpl: typeof fetch): Promise<CodexResetCredits | null> {
   try {
-    const res = await fetch(RESET_CREDITS_URL, { headers: authHeaders(accessToken, accountId) });
+    const res = await fetchImpl(RESET_CREDITS_URL, { headers: authHeaders(accessToken, accountId) });
     if (!res.ok) return null;
     return parseResetCredits((await res.json()) as RawResetCreditsResponse);
   } catch {
@@ -249,25 +251,50 @@ async function fetchResetCredits(accessToken: string, accountId: string | undefi
   }
 }
 
-export async function fetchCodexUsage(): Promise<CodexUsage> {
-  const auth = await readAuth();
-  if (!auth) throw new Error(`no codex auth at ${AUTH_PATH}`);
+export interface CodexUsageFetcherOptions {
+  authPath?: string;
+  fetchImpl?: typeof fetch;
+}
 
-  let accessToken = auth.accessToken;
-  let res = await callUsage(accessToken, auth.accountId);
-  if (res.status === 401 && auth.refreshToken) {
-    accessToken = await refresh(auth.refreshToken);
-    res = await callUsage(accessToken, auth.accountId);
+/** Creates an isolated fetcher so one OAuth refresh is shared by concurrent callers. */
+export function createCodexUsageFetcher(options: CodexUsageFetcherOptions = {}): () => Promise<CodexUsage> {
+  const authPath = options.authPath ?? AUTH_PATH;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  let refreshInFlight: Promise<string> | null = null;
+
+  async function refreshSingleFlight(refreshToken: string): Promise<string> {
+    if (refreshInFlight) return refreshInFlight;
+    const operation = refresh(authPath, refreshToken, fetchImpl);
+    refreshInFlight = operation;
+    try {
+      return await operation;
+    } finally {
+      if (refreshInFlight === operation) refreshInFlight = null;
+    }
   }
-  if (res.status === 429) {
-    throw new RateLimitError(parseRetryAfter(res.headers.get("retry-after")) || 60);
-  }
-  if (!res.ok) {
-    throw new Error(`codex usage HTTP ${res.status} ${await res.text().catch(() => "")}`);
-  }
-  const parsed = parseCodexUsage((await res.json()) as RawCodexUsageResponse);
-  return {
-    ...parsed,
-    reset_credits: await fetchResetCredits(accessToken, auth.accountId),
+
+  return async function fetchCodexUsage(): Promise<CodexUsage> {
+    const auth = await readAuth(authPath);
+    if (!auth) throw new Error(`no codex auth at ${authPath}`);
+
+    let accessToken = auth.accessToken;
+    let res = await callUsage(accessToken, auth.accountId, fetchImpl);
+    if (res.status === 401 && auth.refreshToken) {
+      accessToken = await refreshSingleFlight(auth.refreshToken);
+      res = await callUsage(accessToken, auth.accountId, fetchImpl);
+    }
+    if (res.status === 429) {
+      throw new RateLimitError(parseRetryAfter(res.headers.get("retry-after")) || 60);
+    }
+    if (!res.ok) {
+      throw new Error(`codex usage HTTP ${res.status} ${await res.text().catch(() => "")}`);
+    }
+    const parsed = parseCodexUsage((await res.json()) as RawCodexUsageResponse);
+    return {
+      ...parsed,
+      reset_credits: await fetchResetCredits(accessToken, auth.accountId, fetchImpl),
+    };
   };
 }
+
+export const fetchCodexUsage = createCodexUsageFetcher();

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseCodexUsage, parseResetCredits } from "../src/providers/codex.ts";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { createCodexUsageFetcher, parseCodexUsage, parseResetCredits } from "../src/providers/codex.ts";
 
 const fiveHourRaw = {
   used_percent: 18,
@@ -12,6 +15,103 @@ const sevenDayRaw = {
   limit_window_seconds: 7 * 24 * 60 * 60,
   reset_at: 1785259658,
 };
+
+const usageResponse = () => new Response(JSON.stringify({
+  plan_type: "pro",
+  rate_limit: { primary_window: fiveHourRaw, secondary_window: sevenDayRaw },
+}), { headers: { "Content-Type": "application/json" } });
+
+async function withAuthFile<T>(auth: object, run: (authPath: string) => Promise<T>): Promise<T> {
+  const directory = await mkdtemp(path.join(tmpdir(), "usage-api-codex-auth-"));
+  const authPath = path.join(directory, "auth.json");
+  await writeFile(authPath, JSON.stringify(auth), { mode: 0o600 });
+  try {
+    return await run(authPath);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+function headersOf(init?: RequestInit): Headers {
+  return new Headers(init?.headers);
+}
+
+test("Codex refresh persists a rotated refresh token with the new access token", async () => {
+  await withAuthFile({ tokens: { access_token: "old-access", refresh_token: "old-refresh", account_id: "account" }, preserved: true }, async (authPath) => {
+    const fetcher = createCodexUsageFetcher({
+      authPath,
+      fetchImpl: (async (input, init) => {
+        const url = String(input);
+        if (url === "https://auth.openai.com/oauth/token") {
+          assert.match(String(init?.body), /old-refresh/);
+          return new Response(JSON.stringify({ access_token: "new-access", refresh_token: "new-refresh" }), { headers: { "Content-Type": "application/json" } });
+        }
+        if (url.endsWith("/rate-limit-reset-credits")) return new Response("", { status: 404 });
+        if (headersOf(init).get("Authorization") === "Bearer old-access") return new Response("", { status: 401 });
+        assert.equal(headersOf(init).get("Authorization"), "Bearer new-access");
+        assert.equal(headersOf(init).get("ChatGPT-Account-Id"), "account");
+        return usageResponse();
+      }) as typeof fetch,
+    });
+
+    const usage = await fetcher();
+    assert.equal(usage.five_hour?.used_percent, 18);
+    assert.deepEqual(JSON.parse(await readFile(authPath, "utf8")), {
+      tokens: { access_token: "new-access", refresh_token: "new-refresh", account_id: "account" },
+      preserved: true,
+    });
+  });
+});
+
+test("Codex refresh is single-flight for concurrent 401 responses", async () => {
+  await withAuthFile({ access_token: "old-access", refresh_token: "old-refresh" }, async (authPath) => {
+    let refreshCalls = 0;
+    let releaseRefresh!: () => void;
+    const refreshReleased = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+    let refreshStarted!: () => void;
+    const started = new Promise<void>((resolve) => { refreshStarted = resolve; });
+    const fetcher = createCodexUsageFetcher({
+      authPath,
+      fetchImpl: (async (input, init) => {
+        const url = String(input);
+        if (url === "https://auth.openai.com/oauth/token") {
+          refreshCalls += 1;
+          refreshStarted();
+          await refreshReleased;
+          return new Response(JSON.stringify({ access_token: "new-access", refresh_token: "new-refresh" }), { headers: { "Content-Type": "application/json" } });
+        }
+        if (url.endsWith("/rate-limit-reset-credits")) return new Response("", { status: 404 });
+        return headersOf(init).get("Authorization") === "Bearer old-access"
+          ? new Response("", { status: 401 })
+          : usageResponse();
+      }) as typeof fetch,
+    });
+
+    const first = fetcher();
+    await started;
+    const second = fetcher();
+    await Promise.resolve();
+    assert.equal(refreshCalls, 1);
+    releaseRefresh();
+    await Promise.all([first, second]);
+    assert.equal(refreshCalls, 1);
+  });
+});
+
+test("failed Codex refresh leaves credentials unchanged", async () => {
+  const original = { access_token: "old-access", refresh_token: "old-refresh", account_id: "account" };
+  await withAuthFile(original, async (authPath) => {
+    const fetcher = createCodexUsageFetcher({
+      authPath,
+      fetchImpl: (async (input) => String(input) === "https://auth.openai.com/oauth/token"
+        ? new Response(JSON.stringify({ error: "rejected" }), { status: 401, headers: { "Content-Type": "application/json" } })
+        : new Response("", { status: 401 })) as typeof fetch,
+    });
+
+    await assert.rejects(fetcher(), /codex token refresh failed: HTTP 401/);
+    assert.deepEqual(JSON.parse(await readFile(authPath, "utf8")), original);
+  });
+});
 
 test("parseCodexUsage classifies the normal 5-hour and 7-day windows by duration", () => {
   const parsed = parseCodexUsage({

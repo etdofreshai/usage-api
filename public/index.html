@@ -152,6 +152,10 @@ const CURATED_HISTORY_SERIES = [
   { key: "codex:seven_day", label: "Codex 7-day", color: "#86efac", default: true },
   { key: "codex:GPT-5.3-Codex-Spark five_hour", label: "Codex Spark 5-hour", color: "#06b6d4", default: false },
   { key: "codex:GPT-5.3-Codex-Spark seven_day", label: "Codex Spark 7-day", color: "#67e8f9", default: false },
+  { key: "codex2:five_hour", label: "Codex #2 5-hour", color: "#3b82f6", default: false },
+  { key: "codex2:seven_day", label: "Codex #2 7-day", color: "#93c5fd", default: false },
+  { key: "codex2:GPT-5.3-Codex-Spark five_hour", label: "Codex #2 Spark 5-hour", color: "#8b5cf6", default: false },
+  { key: "codex2:GPT-5.3-Codex-Spark seven_day", label: "Codex #2 Spark 7-day", color: "#c4b5fd", default: false },
   { key: "zai:five_hour", label: "ZAI 5-hour", color: "#a855f7", default: true },
   { key: "zai:monthly", label: "ZAI monthly", color: "#d8b4fe", default: false },
   { key: "claude2:five_hour", label: "Claude #2 Code 5-hour", color: "#f59e0b", default: false },
@@ -170,6 +174,7 @@ let historyWindowEndMs = null;
 let latestHistory = null;
 let latestUsage = null;
 let hasClaude2 = false;
+let hasCodex2 = false;
 document.getElementById("every").textContent = (REFRESH_MS / 1000).toFixed(0);
 
 function fmtPct(n) {
@@ -291,17 +296,20 @@ const PROVIDER_LINKS = {
   claude: "https://claude.ai/settings/usage",
   claude2: "https://claude.ai/settings/usage",
   codex: "https://chatgpt.com/codex/cloud/settings/analytics#usage",
+  codex2: "https://chatgpt.com/codex/cloud/settings/analytics#usage",
   zai: "https://z.ai/manage-apikey/subscription#usage",
 };
 
 const PROVIDER_TITLES = {
   claude2: "claude #2",
+  codex2: "codex #2",
 };
 
 const RENDERERS = {
   claude: renderClaude,
   claude2: renderClaude,
   codex: renderCodex,
+  codex2: renderCodex,
   zai: renderZai,
   openrouter: renderRaw,
   openai: renderRaw,
@@ -323,7 +331,7 @@ function card(name, snap) {
     ? `<div class="err">${escapeHtml(String(snap.error))}</div>${snap.data ? renderer(snap) : ""}`
     : renderer(snap || {});
   const link = PROVIDER_LINKS[name];
-  const title = PROVIDER_TITLES[name] ?? name;
+  const title = name === "codex" && hasCodex2 ? "codex #1" : (PROVIDER_TITLES[name] ?? name);
   const titleHtml = link
     ? `<a class="provider-link" href="${link}" target="_blank" rel="noopener">${title}</a>`
     : title;
@@ -353,6 +361,10 @@ function seriesKey(series) {
 // usage response) or history already contains claude2 samples.
 function claude2Visible() {
   return hasClaude2 || (latestHistory?.series ?? []).some(s => s.provider === "claude2");
+}
+
+function codex2Visible() {
+  return hasCodex2;
 }
 
 function defaultSeriesKeys() {
@@ -591,7 +603,7 @@ function renderHistory(history) {
   renderSeriesMenu();
   const seriesMap = new Map((history.series ?? []).map(s => [seriesKey(s), s]));
   const selected = CURATED_HISTORY_SERIES
-    .filter(option => selectedSeriesKeys.has(option.key))
+    .filter(option => selectedSeriesKeys.has(option.key) && (codex2Visible() || !option.key.startsWith("codex2:")))
     .map(option => {
       const series = seriesMap.get(option.key);
       return series ? { ...option, series: { ...series, points: cleanedHistoryPoints(visibleHistoryPoints(series.points)) } } : { ...option, series };
@@ -712,7 +724,10 @@ function renderSeriesMenu() {
       <button type="button" data-series-action="default">default</button>
     </div>
   `;
-  const options = CURATED_HISTORY_SERIES.filter(option => claude2Visible() || !option.key.startsWith("claude2:")).map(option => {
+  const options = CURATED_HISTORY_SERIES.filter(option =>
+    (claude2Visible() || !option.key.startsWith("claude2:")) &&
+    (codex2Visible() || !option.key.startsWith("codex2:"))
+  ).map(option => {
     const checked = selectedSeriesKeys.has(option.key);
     const expectedChecked = expectedSeriesKeys.has(option.key);
     return `
@@ -800,8 +815,15 @@ async function tick() {
       hasClaude2 = !!j.providers.claude2;
       renderSeriesMenu();
     }
-    const order = ["claude", "codex", "zai", "openrouter", "openai"];
-    if (j.providers.claude2) order.splice(1, 0, "claude2");
+    if (hasCodex2 !== !!j.providers.codex2?.data) {
+      hasCodex2 = !!j.providers.codex2?.data;
+      renderSeriesMenu();
+    }
+    const order = ["claude"];
+    if (j.providers.claude2) order.push("claude2");
+    order.push("codex");
+    if (j.providers.codex2?.data) order.push("codex2");
+    order.push("zai", "openrouter", "openai");
     grid.innerHTML = order.map(n => card(n, j.providers[n])).join("");
     if (latestHistory) renderHistory(latestHistory);
   } catch (err) {

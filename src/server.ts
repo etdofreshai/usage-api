@@ -29,7 +29,7 @@ try {
   if (err?.code !== "ENOENT") console.warn(`could not read ${ENV_FILE}: ${err?.message ?? err}`);
 }
 import { fetchClaudeUsage } from "./providers/anthropic.js";
-import { fetchCodexUsage } from "./providers/codex.js";
+import { createCodexUsageFetcher } from "./providers/codex.js";
 import { fetchZaiUsage } from "./providers/zai.js";
 import { fetchOpenRouterUsage } from "./providers/openrouter.js";
 import { fetchOpenAiUsage } from "./providers/openai.js";
@@ -49,7 +49,7 @@ await history.load();
 function remember<T>(provider: string): (data: T, fetchedAt: Date) => void {
   return (data: T, fetchedAt: Date) => {
     const enriched = enrichProviderData(provider, data);
-    if (provider !== "codex" || !enriched || typeof enriched !== "object") {
+    if ((provider !== "codex" && provider !== "codex2") || !enriched || typeof enriched !== "object") {
       history.recordProvider(provider, enriched, fetchedAt);
       return;
     }
@@ -95,9 +95,46 @@ console.log(CLAUDE2_OFF
       ? `claude2 enabled (credentials: ${CLAUDE2_CREDS_PATH})`
       : `claude2 disabled (CLAUDE2_CREDENTIALS_PATH unset, no file at ${CLAUDE2_DEFAULT_PATH})`);
 
+// Optional second Codex account. Keep it on a separate auth file so access and
+// rotated refresh tokens can never be overwritten by the primary account.
+// The default mirrors CODEX_AUTH_PATH's auth root (for example,
+// /home/node/auth/.codex2/auth.json in Docker or ~/.codex2/auth.json locally).
+const CODEX1_AUTH_PATH = process.env.CODEX_AUTH_PATH ?? path.join(homedir(), ".codex", "auth.json");
+const CODEX2_OFF = /^(0|false|no|off)$/i.test((process.env.CODEX2_ENABLED ?? "").trim());
+const CODEX2_PATH = process.env.CODEX2_AUTH_PATH?.trim() || undefined;
+const CODEX2_DEFAULT_PATH = path.join(path.dirname(path.dirname(CODEX1_AUTH_PATH)), ".codex2", "auth.json");
+const CODEX2_CANDIDATE = CODEX2_OFF
+  ? null
+  : (CODEX2_PATH ?? (await fs.access(CODEX2_DEFAULT_PATH).then(() => CODEX2_DEFAULT_PATH, () => null)));
+async function sameCredentialFile(left: string, right: string): Promise<boolean> {
+  if (path.resolve(left) === path.resolve(right)) return true;
+  const [leftReal, rightReal] = await Promise.all([
+    fs.realpath(left).catch(() => path.resolve(left)),
+    fs.realpath(right).catch(() => path.resolve(right)),
+  ]);
+  if (leftReal === rightReal) return true;
+  const [leftStat, rightStat] = await Promise.all([
+    fs.stat(left).catch(() => null),
+    fs.stat(right).catch(() => null),
+  ]);
+  return leftStat != null && rightStat != null && leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
+}
+const CODEX2_SAME_AS_1 = CODEX2_CANDIDATE != null && await sameCredentialFile(CODEX2_CANDIDATE, CODEX1_AUTH_PATH);
+const CODEX2_AUTH_PATH = CODEX2_SAME_AS_1 ? null : CODEX2_CANDIDATE;
+console.log(CODEX2_OFF
+  ? "codex2 disabled (CODEX2_ENABLED=false)"
+  : CODEX2_SAME_AS_1
+    ? `codex2 disabled: CODEX2_AUTH_PATH resolves to account 1's auth file (${CODEX2_CANDIDATE})`
+    : CODEX2_AUTH_PATH
+      ? `codex2 enabled (auth: ${CODEX2_AUTH_PATH})`
+      : `codex2 disabled (CODEX2_AUTH_PATH unset, no file at ${CODEX2_DEFAULT_PATH})`);
+
 const claude = new Poller("claude", fetchClaudeUsage, remember("claude"));
 const claude2 = CLAUDE2_CREDS_PATH ? new Poller("claude2", () => fetchClaudeUsage(CLAUDE2_CREDS_PATH), remember("claude2")) : null;
-const codex = new Poller("codex", fetchCodexUsage, remember("codex"));
+const codex = new Poller("codex", createCodexUsageFetcher({ authPath: CODEX1_AUTH_PATH }), remember("codex"));
+const codex2 = CODEX2_AUTH_PATH
+  ? new Poller("codex2", createCodexUsageFetcher({ authPath: CODEX2_AUTH_PATH }), remember("codex2"))
+  : null;
 const zai = ZAI_KEY ? new Poller("zai", () => fetchZaiUsage(ZAI_KEY), remember("zai")) : null;
 const openrouter = OPENROUTER_KEY ? new Poller("openrouter", () => fetchOpenRouterUsage(OPENROUTER_KEY), remember("openrouter")) : null;
 const openai = OPENAI_KEY ? new Poller("openai", () => fetchOpenAiUsage(OPENAI_KEY), remember("openai")) : null;
@@ -105,6 +142,7 @@ const openai = OPENAI_KEY ? new Poller("openai", () => fetchOpenAiUsage(OPENAI_K
 claude.start();
 claude2?.start();
 codex.start();
+codex2?.start();
 zai?.start();
 openrouter?.start();
 openai?.start();
@@ -202,7 +240,7 @@ function enrichZai(snap: { data?: any }) {
 
 function enrichProviderData(provider: string, data: unknown): unknown {
   if (provider === "claude" || provider === "claude2") return enrichClaude({ data }).data;
-  if (provider === "codex") return enrichCodex({ data }).data;
+  if (provider === "codex" || provider === "codex2") return enrichCodex({ data }).data;
   if (provider === "zai") return enrichZai({ data }).data;
   return data;
 }
@@ -211,6 +249,7 @@ app.get("/api/usage", (_req, res) => {
   const providers: Record<string, unknown> = { claude: enrichClaude(claude.snapshot()) };
   if (claude2) providers.claude2 = enrichClaude(claude2.snapshot());
   providers.codex = enrichCodex(codex.snapshot());
+  if (codex2) providers.codex2 = enrichCodex(codex2.snapshot());
   providers.zai = zai ? enrichZai(zai.snapshot()) : { data: null, error: "ZAI_API_KEY not set" };
   providers.openrouter = openrouter?.snapshot() ?? { data: null, error: "OPENROUTER_API_KEY not set" };
   providers.openai = openai?.snapshot() ?? { data: null, error: "OPENAI_ADMIN_KEY not set" };

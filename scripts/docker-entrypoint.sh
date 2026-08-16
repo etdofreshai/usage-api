@@ -19,5 +19,6 @@ seed_auth_directory() {
 seed_auth_directory /home/node/.claude "$auth_root/.claude"
 seed_auth_directory /home/node/.claude2 "$auth_root/.claude2"
 seed_auth_directory /home/node/.codex "$auth_root/.codex"
+seed_auth_directory /home/node/.codex2 "$auth_root/.codex2"
 
 exec node dist/server.js

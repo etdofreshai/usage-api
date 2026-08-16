@@ -43,6 +43,7 @@ env vars still override the file.
 | Claude Max   | `/home/node/auth/.claude/.credentials.json` (OAuth, auto-refreshes)   |
 | Claude Max #2 (optional) | `/home/node/auth/.claude2/.credentials.json` (OAuth, auto-refreshes) |
 | Codex        | `/home/node/auth/.codex/auth.json` (OAuth, refreshes on 401)          |
+| Codex #2 (optional) | `/home/node/auth/.codex2/auth.json` (separate OAuth, refreshes on 401) |
 | Z.ai         | `ZAI_API_KEY` env                                       |
 | OpenRouter   | `OPENROUTER_API_KEY` env                                |
 | OpenAI       | `OPENAI_ADMIN_KEY` env                                  |
@@ -55,6 +56,7 @@ from the former `ai-sessions-date` bind mounts:
 -v $HOME/.claude:/home/node/.claude
 -v $HOME/.claude2:/home/node/.claude2
 -v $HOME/.codex:/home/node/.codex
+-v $HOME/.codex2:/home/node/.codex2
 ```
 
 After the initial copy, Usage API refreshes and atomically rewrites its own
@@ -76,6 +78,22 @@ A second Claude account is opt-in. At startup the server checks
 - `CLAUDE2_ENABLED=false` (or `0`/`no`/`off`) → hard kill switch: the account is
   fully disabled and absent even when its credentials file exists. Use this to
   turn the second account off from the environment without removing the file.
+
+### Second Codex account
+
+A second Codex account is opt-in and never shares tokens or usage totals with
+the primary account. At startup the server checks for `.codex2/auth.json` next
+to the primary `CODEX_AUTH_PATH` (override with `CODEX2_AUTH_PATH`):
+
+- File exists (or the path is explicitly set) → `/api/usage` includes a
+  separate `codex2` provider and the dashboard labels both Codex accounts.
+- Unconfigured → `codex2` is absent from the API, dashboard, and monitor.
+- `CODEX2_AUTH_PATH` explicitly set → a missing or invalid file appears as a
+  labeled `codex2` error in the API response for diagnosis, while the website
+  and monitor stay free of empty/disabled account cards.
+- `CODEX2_ENABLED=false` (or `0`/`no`/`off`) → hard kill switch.
+- A path that resolves to the primary `CODEX_AUTH_PATH` is rejected to prevent
+  the two refresh-token lifecycles from overwriting each other.
 
 ## Run locally
 
@@ -105,7 +123,10 @@ usage-auth status
 usage-auth claude
 usage-auth claude2
 usage-auth codex
+usage-auth codex2
 ```
 
 The helper reads and writes the existing `usage-api-auth` volume. The Codex
-command uses device-code authentication for the headless container.
+commands use separate `CODEX_HOME` directories and device-code authentication
+for the headless container. Run `usage-auth codex2` and complete the login as
+the second account; the helper never prints or copies tokens.

@@ -68,6 +68,10 @@ test("history graph exposes all known provider series with preferred color famil
     { key: "codex:seven_day", label: "Codex 7-day", color: "#86efac", default: true },
     { key: "codex:GPT-5.3-Codex-Spark five_hour", label: "Codex Spark 5-hour", color: "#06b6d4", default: false },
     { key: "codex:GPT-5.3-Codex-Spark seven_day", label: "Codex Spark 7-day", color: "#67e8f9", default: false },
+    { key: "codex2:five_hour", label: "Codex #2 5-hour", color: "#3b82f6", default: false },
+    { key: "codex2:seven_day", label: "Codex #2 7-day", color: "#93c5fd", default: false },
+    { key: "codex2:GPT-5.3-Codex-Spark five_hour", label: "Codex #2 Spark 5-hour", color: "#8b5cf6", default: false },
+    { key: "codex2:GPT-5.3-Codex-Spark seven_day", label: "Codex #2 Spark 7-day", color: "#c4b5fd", default: false },
     { key: "zai:five_hour", label: "ZAI 5-hour", color: "#a855f7", default: true },
     { key: "zai:monthly", label: "ZAI monthly", color: "#d8b4fe", default: false },
     { key: "claude2:five_hour", label: "Claude #2 Code 5-hour", color: "#f59e0b", default: false },
@@ -209,6 +213,15 @@ test("Codex card omits unavailable 5-hour metrics and explains the reporting gap
   assert.match(html, /windowRow\("7-day", d\.seven_day\)/);
   assert.match(html, /5-hour limit is not currently reported by Codex/);
   assert.doesNotMatch(html, /metricRow\("primary", d\.primary/);
+});
+
+test("optional second Codex account remains separate and clearly labeled", () => {
+  assert.match(html, /codex2: renderCodex/);
+  assert.match(html, /codex2: "codex #2"/);
+  assert.match(html, /name === "codex" && hasCodex2 \? "codex #1"/);
+  assert.match(html, /hasCodex2 = !!j\.providers\.codex2\?\.data/);
+  assert.match(html, /if \(j\.providers\.codex2\?\.data\) order\.push\("codex2"\)/);
+  assert.match(html, /codex2Visible\(\) \|\| !option\.key\.startsWith\("codex2:"\)/);
 });
 
 test("dashboard cards link to provider usage pages", () => {

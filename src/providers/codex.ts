@@ -1,47 +1,18 @@
 /**
- * Codex usage via the (browser-authenticated) wham endpoint.
+ * Codex usage via ET's CLIProxyAPI server.
  *
- * Reads ~/.codex/auth.json (mounted from host, shared with ai-sessions).
- * Refreshes the access token reactively on 401.
- *
- * Endpoint: GET https://chatgpt.com/backend-api/wham/usage
- *   → rate_limit.{primary_window, secondary_window}.{used_percent, reset_at, limit_window_seconds}
- *
- * OpenAI's primary/secondary slot names are positional, not semantic. In July
- * 2026 it temporarily stopped reporting the 5-hour limit and moved the 7-day
- * limit into primary_window. Classify windows by duration so the public API
- * continues to report five_hour/seven_day accurately.
+ * CLIProxyAPI holds the OAuth-authenticated Codex account(s) and passively
+ * captures OpenAI's rate-limit response headers on every real Codex call it
+ * proxies (X-Codex-Primary-*, X-Codex-Secondary-*, and the Spark
+ * "Bengalfox" pair). Window minutes classify five_hour vs. seven_day the
+ * same way the old wham/usage-based fetcher did — OpenAI's primary/
+ * secondary slot naming is positional, not semantic, so trust the window
+ * length instead of the label. Reset credits aren't in those passive
+ * headers, so that one field is still fetched live, but through
+ * CLIProxyAPI's own /api-call proxy using its already-refreshed access
+ * token instead of usage-api managing Codex OAuth credentials itself.
  */
-import { promises as fs } from "node:fs";
-import { homedir } from "node:os";
-import path from "node:path";
-import { RateLimitError, parseRetryAfter } from "../cache.js";
-
-const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
-const RESET_CREDITS_URL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
-const TOKEN_URL = "https://auth.openai.com/oauth/token";
-const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
-const USER_AGENT = "codex-cli";
-
-const AUTH_PATH = process.env.CODEX_AUTH_PATH
-  ?? path.join(homedir(), ".codex", "auth.json");
-
-interface CodexAuth {
-  accessToken: string;
-  refreshToken?: string;
-  accountId?: string;
-}
-
-interface AuthTokens {
-  access_token?: string;
-  refresh_token?: string;
-  account_id?: string;
-}
-// Codex CLI has shipped two layouts: tokens nested under `tokens`, and tokens
-// at the top level. Accept either.
-interface AuthFile extends AuthTokens {
-  tokens?: AuthTokens;
-}
+import { callThroughCliProxy, CpaAuthFile, findAuthFile, isoFromRelativeSeconds, unixSecondsToIso } from "./cliproxyapi.js";
 
 export interface CodexWindow {
   used_percent: number;
@@ -66,12 +37,8 @@ export interface CodexResetCredit {
   expires_at: string | null;
 }
 
-// "Rate limit reset credits" — free full-reset grants (30-day expiry) listed by
-// GET /backend-api/wham/rate-limit-reset-credits. The wham/usage summary only
-// carries available_count; this block adds per-credit expiry dates.
 export interface CodexResetCredits {
   available_count: number;
-  // Soonest expires_at among still-available credits ("use it or lose it").
   next_expires_at: string | null;
   credits: CodexResetCredit[];
 }
@@ -86,45 +53,43 @@ export interface CodexUsage {
   secondary: CodexWindow | null;
   additional: CodexAdditionalLimit[];
   credits_balance: string | null;
-  // null when the reset-credits endpoint is unavailable (best-effort fetch).
+  // null when reset-credits couldn't be fetched (best-effort call).
   reset_credits: CodexResetCredits | null;
 }
 
-type RawWindow = { used_percent?: number; reset_at?: number; limit_window_seconds?: number } | null | undefined;
-type RawRateLimit = { primary_window?: RawWindow; secondary_window?: RawWindow } | null | undefined;
+const RESET_CREDITS_URL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 
-export interface RawCodexUsageResponse {
-  plan_type?: string;
-  rate_limit?: RawRateLimit;
-  additional_rate_limits?: Array<{
-    limit_name?: string;
-    metered_feature?: string;
-    rate_limit?: RawRateLimit;
-  }>;
-  credits?: { unlimited?: boolean; balance?: string };
-}
-
-export interface RawResetCreditsResponse {
-  credits?: Array<{
-    status?: string;
-    granted_at?: string;
-    expires_at?: string;
-  }>;
-  available_count?: number;
-}
-
-function parseWindow(w: RawWindow): CodexWindow | null {
-  if (!w || typeof w.used_percent !== "number") return null;
+function rawWindow(
+  signals: Record<string, string> | undefined,
+  observedAt: string | undefined,
+  prefix: string
+): CodexWindow | null {
+  if (!signals) return null;
+  const usedRaw = signals[`X-Codex-${prefix}-Used-Percent`];
+  const minutesRaw = signals[`X-Codex-${prefix}-Window-Minutes`];
+  if (usedRaw === undefined || minutesRaw === undefined) return null;
+  const windowMinutes = Number(minutesRaw);
+  if (!Number.isFinite(windowMinutes) || windowMinutes <= 0) return null;
+  const resetsAt =
+    unixSecondsToIso(signals[`X-Codex-${prefix}-Reset-At`]) ??
+    isoFromRelativeSeconds(observedAt, signals[`X-Codex-${prefix}-Reset-After-Seconds`]);
   return {
-    used_percent: w.used_percent,
-    resets_at: w.reset_at ? new Date(w.reset_at * 1000).toISOString() : null,
-    window_minutes: w.limit_window_seconds ? Math.round(w.limit_window_seconds / 60) : 0,
+    used_percent: Number(usedRaw) || 0,
+    resets_at: resetsAt,
+    window_minutes: Math.round(windowMinutes),
   };
 }
 
-function classifyWindows(rateLimit: RawRateLimit): { five_hour: CodexWindow | null; seven_day: CodexWindow | null } {
-  const windows = [parseWindow(rateLimit?.primary_window), parseWindow(rateLimit?.secondary_window)]
-    .filter((w): w is CodexWindow => w !== null);
+function classifyWindows(
+  signals: Record<string, string> | undefined,
+  observedAt: string | undefined,
+  bengalfox: boolean
+): { five_hour: CodexWindow | null; seven_day: CodexWindow | null } {
+  const prefix = bengalfox ? "Bengalfox-" : "";
+  const windows = [
+    rawWindow(signals, observedAt, `${prefix}Primary`),
+    rawWindow(signals, observedAt, `${prefix}Secondary`),
+  ].filter((w): w is CodexWindow => w !== null);
   return {
     // Allow modest server-side duration changes without confusing a short
     // session window with the weekly window.
@@ -133,168 +98,68 @@ function classifyWindows(rateLimit: RawRateLimit): { five_hour: CodexWindow | nu
   };
 }
 
-export function parseCodexUsage(json: RawCodexUsageResponse): Omit<CodexUsage, "reset_credits"> {
-  const windows = classifyWindows(json.rate_limit);
-  const additional: CodexAdditionalLimit[] = (json.additional_rate_limits ?? []).map((a) => {
-    const classified = classifyWindows(a.rate_limit);
-    return {
-      name: a.limit_name ?? "unknown",
-      metered_feature: a.metered_feature ?? null,
-      ...classified,
-      primary: classified.five_hour,
-      secondary: classified.seven_day,
+async function fetchResetCredits(entry: CpaAuthFile): Promise<CodexResetCredits | null> {
+  try {
+    const { status, body } = await callThroughCliProxy(entry.auth_index, "GET", RESET_CREDITS_URL, {
+      Authorization: "Bearer $TOKEN$",
+      "User-Agent": "codex-cli",
+      Accept: "application/json",
+    });
+    if (status !== 200) return null;
+    const json = JSON.parse(body) as {
+      available_count?: number;
+      credits?: Array<{ status?: string; granted_at?: string; expires_at?: string }>;
     };
-  });
+    const credits: CodexResetCredit[] = (json.credits ?? []).map((c) => ({
+      status: c.status ?? null,
+      granted_at: c.granted_at ?? null,
+      expires_at: c.expires_at ?? null,
+    }));
+    const nextExpiry =
+      credits
+        .filter((c) => c.status === "available" && c.expires_at)
+        .map((c) => c.expires_at as string)
+        .sort()[0] ?? null;
+    return {
+      available_count: json.available_count ?? credits.filter((c) => c.status === "available").length,
+      next_expires_at: nextExpiry,
+      credits,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchCodexUsage(email?: string): Promise<CodexUsage> {
+  const entry = await findAuthFile("codex", email);
+  const signals = entry.quota?.signals;
+  const observedAt = entry.quota?.observed_at;
+  const main = classifyWindows(signals, observedAt, false);
+  const spark = classifyWindows(signals, observedAt, true);
+
+  const sparkName = signals?.["X-Codex-Bengalfox-Limit-Name"];
+  const additional: CodexAdditionalLimit[] = sparkName
+    ? [
+        {
+          name: sparkName,
+          metered_feature: "codex_bengalfox",
+          five_hour: spark.five_hour,
+          seven_day: spark.seven_day,
+          primary: spark.five_hour,
+          secondary: spark.seven_day,
+        },
+      ]
+    : [];
+
   return {
-    plan_type: json.plan_type ?? null,
-    ...windows,
-    primary: windows.five_hour,
-    secondary: windows.seven_day,
+    plan_type: signals?.["X-Codex-Plan-Type"] ?? null,
+    five_hour: main.five_hour,
+    seven_day: main.seven_day,
+    primary: main.five_hour,
+    secondary: main.seven_day,
     additional,
-    credits_balance: json.credits?.unlimited ? "unlimited" : json.credits?.balance ?? null,
+    credits_balance:
+      signals?.["X-Codex-Credits-Unlimited"] === "True" ? "unlimited" : signals?.["X-Codex-Credits-Balance"] ?? null,
+    reset_credits: await fetchResetCredits(entry),
   };
 }
-
-export function parseResetCredits(json: RawResetCreditsResponse): CodexResetCredits {
-  const credits: CodexResetCredit[] = (json.credits ?? []).map((c) => ({
-    status: c.status ?? null,
-    granted_at: c.granted_at ?? null,
-    expires_at: c.expires_at ?? null,
-  }));
-  const nextExpiry = credits
-    .filter((c) => c.status === "available" && c.expires_at)
-    .map((c) => c.expires_at as string)
-    .sort()[0] ?? null;
-  return {
-    available_count: json.available_count ?? credits.filter((c) => c.status === "available").length,
-    next_expires_at: nextExpiry,
-    credits,
-  };
-}
-
-async function readAuth(authPath: string): Promise<CodexAuth | null> {
-  try {
-    const raw = await fs.readFile(authPath, "utf8");
-    const parsed = JSON.parse(raw) as AuthFile;
-    const t: AuthTokens = parsed.tokens ?? parsed;
-    if (!t?.access_token) return null;
-    return { accessToken: t.access_token, refreshToken: t.refresh_token, accountId: t.account_id };
-  } catch {
-    return null;
-  }
-}
-
-async function writeCredentials(authPath: string, accessToken: string, refreshToken?: string): Promise<void> {
-  let existing: AuthFile = {};
-  try {
-    existing = JSON.parse(await fs.readFile(authPath, "utf8"));
-  } catch {}
-  // Preserve whichever layout the file uses on disk and replace both tokens in
-  // one atomic rename. OpenAI rotates refresh tokens, so writing only the
-  // access token leaves the next refresh trying to reuse an invalid token.
-  const nested = existing.tokens !== undefined;
-  const merged: AuthFile = nested
-    ? { ...existing, tokens: { ...(existing.tokens ?? {}), access_token: accessToken, ...(refreshToken ? { refresh_token: refreshToken } : {}) } }
-    : { ...existing, access_token: accessToken, ...(refreshToken ? { refresh_token: refreshToken } : {}) };
-  const tmp = `${authPath}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(merged, null, 2), { mode: 0o600 });
-  await fs.rename(tmp, authPath);
-}
-
-async function refresh(authPath: string, refreshToken: string, fetchImpl: typeof fetch): Promise<string> {
-  const body = new URLSearchParams({
-    client_id: CLIENT_ID,
-    grant_type: "refresh_token",
-    refresh_token: refreshToken,
-  });
-  const res = await fetchImpl(TOKEN_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": USER_AGENT,
-    },
-    body,
-  });
-  if (!res.ok) {
-    throw new Error(`codex token refresh failed: HTTP ${res.status} ${await res.text().catch(() => "")}`);
-  }
-  const json = (await res.json()) as { access_token?: string; refresh_token?: string };
-  if (!json.access_token) throw new Error("codex token refresh: missing access_token");
-  await writeCredentials(authPath, json.access_token, json.refresh_token);
-  return json.access_token;
-}
-
-function authHeaders(accessToken: string, accountId: string | undefined): Record<string, string> {
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${accessToken}`,
-    "User-Agent": USER_AGENT,
-    Accept: "application/json",
-  };
-  if (accountId) headers["ChatGPT-Account-Id"] = accountId;
-  return headers;
-}
-
-async function callUsage(accessToken: string, accountId: string | undefined, fetchImpl: typeof fetch): Promise<Response> {
-  return fetchImpl(USAGE_URL, { headers: authHeaders(accessToken, accountId) });
-}
-
-// Best-effort: reset credits are a nice-to-have, so any failure here must not
-// fail the whole codex poll. (Read-only list endpoint; redeeming is a separate
-// POST .../consume that this service never calls.)
-async function fetchResetCredits(accessToken: string, accountId: string | undefined, fetchImpl: typeof fetch): Promise<CodexResetCredits | null> {
-  try {
-    const res = await fetchImpl(RESET_CREDITS_URL, { headers: authHeaders(accessToken, accountId) });
-    if (!res.ok) return null;
-    return parseResetCredits((await res.json()) as RawResetCreditsResponse);
-  } catch {
-    return null;
-  }
-}
-
-export interface CodexUsageFetcherOptions {
-  authPath?: string;
-  fetchImpl?: typeof fetch;
-}
-
-/** Creates an isolated fetcher so one OAuth refresh is shared by concurrent callers. */
-export function createCodexUsageFetcher(options: CodexUsageFetcherOptions = {}): () => Promise<CodexUsage> {
-  const authPath = options.authPath ?? AUTH_PATH;
-  const fetchImpl = options.fetchImpl ?? fetch;
-  let refreshInFlight: Promise<string> | null = null;
-
-  async function refreshSingleFlight(refreshToken: string): Promise<string> {
-    if (refreshInFlight) return refreshInFlight;
-    const operation = refresh(authPath, refreshToken, fetchImpl);
-    refreshInFlight = operation;
-    try {
-      return await operation;
-    } finally {
-      if (refreshInFlight === operation) refreshInFlight = null;
-    }
-  }
-
-  return async function fetchCodexUsage(): Promise<CodexUsage> {
-    const auth = await readAuth(authPath);
-    if (!auth) throw new Error(`no codex auth at ${authPath}`);
-
-    let accessToken = auth.accessToken;
-    let res = await callUsage(accessToken, auth.accountId, fetchImpl);
-    if (res.status === 401 && auth.refreshToken) {
-      accessToken = await refreshSingleFlight(auth.refreshToken);
-      res = await callUsage(accessToken, auth.accountId, fetchImpl);
-    }
-    if (res.status === 429) {
-      throw new RateLimitError(parseRetryAfter(res.headers.get("retry-after")) || 60);
-    }
-    if (!res.ok) {
-      throw new Error(`codex usage HTTP ${res.status} ${await res.text().catch(() => "")}`);
-    }
-    const parsed = parseCodexUsage((await res.json()) as RawCodexUsageResponse);
-    return {
-      ...parsed,
-      reset_credits: await fetchResetCredits(accessToken, auth.accountId, fetchImpl),
-    };
-  };
-}
-
-export const fetchCodexUsage = createCodexUsageFetcher();

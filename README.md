@@ -4,6 +4,14 @@ Public, no-auth, always-cached aggregator for AI service usage. Polls
 Claude / Codex / Z.ai / OpenRouter / OpenAI in the background and serves
 the latest snapshot from memory — every request is O(0) network.
 
+Claude and Codex usage is read from [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI),
+the proxy server that already owns those OAuth accounts and passively
+captures each provider's rate-limit response headers on real traffic. This
+service no longer manages its own Claude/Codex OAuth credential files or
+token refresh — see [CLIProxyAPI source](#cliproxyapi-source-for-claudecodex)
+below. Z.ai, OpenRouter, and OpenAI are unaffected and still poll directly
+with their own API keys.
+
 ## Endpoint
 
 ```
@@ -40,60 +48,75 @@ env vars still override the file.
 
 | Provider     | Source                                                  |
 |--------------|---------------------------------------------------------|
-| Claude Max   | `/home/node/auth/.claude/.credentials.json` (OAuth, auto-refreshes)   |
-| Claude Max #2 (optional) | `/home/node/auth/.claude2/.credentials.json` (OAuth, auto-refreshes) |
-| Codex        | `/home/node/auth/.codex/auth.json` (OAuth, refreshes on 401)          |
-| Codex #2 (optional) | `/home/node/auth/.codex2/auth.json` (separate OAuth, refreshes on 401) |
+| Claude Max   | CLIProxyAPI `claude` account (email set via `CLIPROXYAPI_CLAUDE_EMAIL`, or auto-picked if only one exists) |
+| Claude Max #2 (optional) | CLIProxyAPI `claude` account matching `CLIPROXYAPI_CLAUDE2_EMAIL` |
+| Codex        | CLIProxyAPI `codex` account matching `CLIPROXYAPI_CODEX_EMAIL` |
+| Codex #2 (optional) | CLIProxyAPI `codex` account matching `CLIPROXYAPI_CODEX2_EMAIL` |
 | Z.ai         | `ZAI_API_KEY` env                                       |
 | OpenRouter   | `OPENROUTER_API_KEY` env                                |
 | OpenAI       | `OPENAI_ADMIN_KEY` env                                  |
 
-OAuth credentials live in the dedicated `usage-api-auth` Docker volume mounted
-at `/home/node/auth`. During migration, the entrypoint seeds an empty volume
-from the former `ai-sessions-date` bind mounts:
+### CLIProxyAPI source for Claude/Codex
+
+`src/providers/cliproxyapi.ts` talks to CLIProxyAPI's Management API instead
+of holding OAuth credentials directly:
+
+- `GET /v0/management/auth-files` lists CLIProxyAPI's registered accounts and
+  the rate-limit headers (`quota` / `model_quotas`) it has already captured
+  from real Claude/Codex traffic — no separate poll against
+  `api.anthropic.com`/`chatgpt.com` is needed for the headline utilization
+  numbers.
+- `POST /v0/management/api-call` is used only for the one field CLIProxyAPI
+  doesn't observe passively: Codex's rate-limit reset credits. It runs the
+  request through CLIProxyAPI using the account's own already-refreshed
+  access token (`$TOKEN$` substitution), so this service still never
+  touches a raw OAuth token.
+
+Required env vars:
 
 ```
--v $HOME/.claude:/home/node/.claude
--v $HOME/.claude2:/home/node/.claude2
--v $HOME/.codex:/home/node/.codex
--v $HOME/.codex2:/home/node/.codex2
+CLIPROXYAPI_BASE_URL=http://etzminisforumx1pro.lan:8317   # default shown
+CLIPROXYAPI_MANAGEMENT_KEY=...                              # from ~/.config/cliproxyapi/management-key on that host
 ```
 
-After the initial copy, Usage API refreshes and atomically rewrites its own
-credential files without sharing token state with other containers.
+Optional account-selection overrides (only needed when CLIProxyAPI has more
+than one account per provider, or the defaults below don't match):
+
+```
+CLIPROXYAPI_CLAUDE_EMAIL=       # unset = auto-pick the sole "claude" account
+CLIPROXYAPI_CLAUDE2_EMAIL=      # unset = claude2 stays disabled
+CLIPROXYAPI_CODEX_EMAIL=etdofresh@gmail.com
+CLIPROXYAPI_CODEX2_EMAIL=etdofresh+dev@gmail.com
+```
+
+`CLAUDE2_ENABLED=false` / `CODEX2_ENABLED=false` still work as hard kill
+switches, same as before.
 
 ### Second Claude account
 
-A second Claude account is opt-in. At startup the server checks
-`~/.claude2/.credentials.json` (override with `CLAUDE2_CREDENTIALS_PATH`):
+A second Claude account is opt-in. At startup the server asks CLIProxyAPI for
+its registered accounts and checks for a `claude` entry matching
+`CLIPROXYAPI_CLAUDE2_EMAIL`:
 
-- File exists (or env var set) → a `claude2` poller runs and `/api/usage`
+- A matching account exists in CLIProxyAPI → a `claude2` poller runs and `/api/usage`
   includes a `claude2` key right after `claude`, same shape. The dashboard
   shows a "claude #2" card and "Claude #2 …" history series.
-- Unconfigured → the `claude2` key is entirely absent from the response (not
+- `CLIPROXYAPI_CLAUDE2_EMAIL` unset, or no matching CLIProxyAPI account → the `claude2` key is entirely absent from the response (not
   null, not an error) and nothing about a second account appears in the UI.
-- `CLAUDE2_CREDENTIALS_PATH` explicitly set → the key is always present, so a
-  bad path/mount surfaces as a visible error entry instead of silently
-  disappearing.
 - `CLAUDE2_ENABLED=false` (or `0`/`no`/`off`) → hard kill switch: the account is
-  fully disabled and absent even when its credentials file exists. Use this to
+  fully disabled and absent even when a matching CLIProxyAPI account exists. Use this to
   turn the second account off from the environment without removing the file.
 
 ### Second Codex account
 
 A second Codex account is opt-in and never shares tokens or usage totals with
-the primary account. At startup the server checks for `.codex2/auth.json` next
-to the primary `CODEX_AUTH_PATH` (override with `CODEX2_AUTH_PATH`):
+the primary account. At startup the server checks CLIProxyAPI for a `codex`
+entry matching `CLIPROXYAPI_CODEX2_EMAIL` (default `etdofresh+dev@gmail.com`):
 
-- File exists (or the path is explicitly set) → `/api/usage` includes a
+- A matching account exists in CLIProxyAPI → `/api/usage` includes a
   separate `codex2` provider and the dashboard labels both Codex accounts.
-- Unconfigured → `codex2` is absent from the API, dashboard, and monitor.
-- `CODEX2_AUTH_PATH` explicitly set → a missing or invalid file appears as a
-  labeled `codex2` error in the API response for diagnosis, while the website
-  and monitor stay free of empty/disabled account cards.
+- No matching CLIProxyAPI account → `codex2` is absent from the API, dashboard, and monitor.
 - `CODEX2_ENABLED=false` (or `0`/`no`/`off`) → hard kill switch.
-- A path that resolves to the primary `CODEX_AUTH_PATH` is rejected to prevent
-  the two refresh-token lifecycles from overwriting each other.
 
 ## Run locally
 
@@ -110,10 +133,21 @@ App: `usage-api`
 Domain: `usage.etdofresh.com`
 Named volumes:
 
-- `usage-api-auth` mounted at `/home/node/auth` for OAuth credentials
+- `usage-api-auth` mounted at `/home/node/auth` — **no longer read by this
+  service now that Claude/Codex go through CLIProxyAPI.** Keeping the volume
+  around is harmless; removing it and the `usage-auth` CLI/companion
+  container below is a separate cleanup step, not done as part of this
+  change.
 - `usage-api-data` mounted at `/home/node/data` for usage history
 
-### Renew OAuth credentials
+### Renew OAuth credentials (legacy — pre-CLIProxyAPI)
+
+This section described renewing the Claude/Codex OAuth files this container
+used to manage directly. It's no longer needed for that purpose: those
+accounts now live in CLIProxyAPI, and refreshing them is CLIProxyAPI's job
+(see its own `-claude-login` / `-codex-login` / `-codex-device-login`
+flags). Kept here for reference until the `usage-api-auth` volume and
+`usage-auth` companion tooling are formally retired.
 
 The main Usage API image includes the Claude and Codex CLIs. Open the Usage API
 application's Dokploy terminal and use:

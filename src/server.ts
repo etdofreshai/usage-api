@@ -1,5 +1,4 @@
 import { promises as fs } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
@@ -29,7 +28,8 @@ try {
   if (err?.code !== "ENOENT") console.warn(`could not read ${ENV_FILE}: ${err?.message ?? err}`);
 }
 import { fetchClaudeUsage } from "./providers/anthropic.js";
-import { createCodexUsageFetcher } from "./providers/codex.js";
+import { fetchCodexUsage } from "./providers/codex.js";
+import { listAuthFiles } from "./providers/cliproxyapi.js";
 import { fetchZaiUsage } from "./providers/zai.js";
 import { fetchOpenRouterUsage } from "./providers/openrouter.js";
 import { fetchOpenAiUsage } from "./providers/openai.js";
@@ -70,71 +70,50 @@ const ZAI_KEY = process.env.ZAI_API_KEY ?? process.env.ZAI_TOKEN;
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY ?? process.env.OPENROUTER_TOKEN;
 const OPENAI_KEY = process.env.OPENAI_ADMIN_KEY; // requires sk-admin-* — keep explicit
 
-// Optional second Claude account. CLAUDE2_ENABLED=false (or 0/no/off) is a hard
-// kill switch that disables it regardless of any credentials file. Otherwise an
-// explicit CLAUDE2_CREDENTIALS_PATH always enables the poller (so a bad path
-// surfaces as a visible error); failing that it is enabled only when the default
-// credentials file exists. Resolved here, in body code, so the values can come
-// from the shared env file loaded above.
+// All Claude/Codex account resolution now goes through ET's CLIProxyAPI
+// server, which already owns the OAuth-authenticated accounts and their
+// token refresh. usage-api just asks it which accounts exist and reads the
+// rate-limit headers CLIProxyAPI already captured from real traffic —
+// see providers/cliproxyapi.ts.
+const CLAUDE_EMAIL = process.env.CLIPROXYAPI_CLAUDE_EMAIL?.trim() || undefined;
+const CLAUDE2_EMAIL = process.env.CLIPROXYAPI_CLAUDE2_EMAIL?.trim() || undefined;
+const CODEX_EMAIL = process.env.CLIPROXYAPI_CODEX_EMAIL?.trim() || "etdofresh@gmail.com";
+const CODEX2_EMAIL = process.env.CLIPROXYAPI_CODEX2_EMAIL?.trim() || "etdofresh+dev@gmail.com";
+
+// CLAUDE2_ENABLED / CODEX2_ENABLED remain hard kill switches. Otherwise a
+// second account is only started when CLIProxyAPI actually has a matching
+// "claude"/"codex" entry for that email at startup, so an unconfigured
+// second account stays silently absent from /api/usage instead of a poller
+// erroring on every tick.
 const CLAUDE2_OFF = /^(0|false|no|off)$/i.test((process.env.CLAUDE2_ENABLED ?? "").trim());
-const CLAUDE2_PATH = process.env.CLAUDE2_CREDENTIALS_PATH?.trim() || undefined;
-const CLAUDE2_DEFAULT_PATH = path.join(homedir(), ".claude2", ".credentials.json");
-const CLAUDE2_CANDIDATE = CLAUDE2_OFF
-  ? null
-  : (CLAUDE2_PATH ?? (await fs.access(CLAUDE2_DEFAULT_PATH).then(() => CLAUDE2_DEFAULT_PATH, () => null)));
-// Refuse to point both accounts at one file: concurrent token refreshes would
-// clobber each other's rotated refresh tokens.
-const CLAUDE1_CREDS_PATH = process.env.CLAUDE_CREDENTIALS_PATH ?? path.join(homedir(), ".claude", ".credentials.json");
-const CLAUDE2_SAME_AS_1 = CLAUDE2_CANDIDATE != null && path.resolve(CLAUDE2_CANDIDATE) === path.resolve(CLAUDE1_CREDS_PATH);
-const CLAUDE2_CREDS_PATH = CLAUDE2_SAME_AS_1 ? null : CLAUDE2_CANDIDATE;
+const CODEX2_OFF = /^(0|false|no|off)$/i.test((process.env.CODEX2_ENABLED ?? "").trim());
+
+let cpaAccounts: Awaited<ReturnType<typeof listAuthFiles>> = [];
+try {
+  cpaAccounts = await listAuthFiles();
+} catch (err: any) {
+  console.warn(`could not reach cliproxyapi at startup: ${err?.message ?? err}`);
+}
+const hasCpaAccount = (provider: string, email: string | undefined) =>
+  cpaAccounts.some((f) => f.provider === provider && (email ? f.email === email : true));
+
+const claude2Enabled = !CLAUDE2_OFF && !!CLAUDE2_EMAIL && hasCpaAccount("claude", CLAUDE2_EMAIL);
+const codex2Enabled = !CODEX2_OFF && hasCpaAccount("codex", CODEX2_EMAIL);
 console.log(CLAUDE2_OFF
   ? "claude2 disabled (CLAUDE2_ENABLED=false)"
-  : CLAUDE2_SAME_AS_1
-    ? `claude2 disabled: CLAUDE2_CREDENTIALS_PATH resolves to account 1's credentials file (${CLAUDE2_CANDIDATE})`
-    : CLAUDE2_CREDS_PATH
-      ? `claude2 enabled (credentials: ${CLAUDE2_CREDS_PATH})`
-      : `claude2 disabled (CLAUDE2_CREDENTIALS_PATH unset, no file at ${CLAUDE2_DEFAULT_PATH})`);
-
-// Optional second Codex account. Keep it on a separate auth file so access and
-// rotated refresh tokens can never be overwritten by the primary account.
-// The default mirrors CODEX_AUTH_PATH's auth root (for example,
-// /home/node/auth/.codex2/auth.json in Docker or ~/.codex2/auth.json locally).
-const CODEX1_AUTH_PATH = process.env.CODEX_AUTH_PATH ?? path.join(homedir(), ".codex", "auth.json");
-const CODEX2_OFF = /^(0|false|no|off)$/i.test((process.env.CODEX2_ENABLED ?? "").trim());
-const CODEX2_PATH = process.env.CODEX2_AUTH_PATH?.trim() || undefined;
-const CODEX2_DEFAULT_PATH = path.join(path.dirname(path.dirname(CODEX1_AUTH_PATH)), ".codex2", "auth.json");
-const CODEX2_CANDIDATE = CODEX2_OFF
-  ? null
-  : (CODEX2_PATH ?? (await fs.access(CODEX2_DEFAULT_PATH).then(() => CODEX2_DEFAULT_PATH, () => null)));
-async function sameCredentialFile(left: string, right: string): Promise<boolean> {
-  if (path.resolve(left) === path.resolve(right)) return true;
-  const [leftReal, rightReal] = await Promise.all([
-    fs.realpath(left).catch(() => path.resolve(left)),
-    fs.realpath(right).catch(() => path.resolve(right)),
-  ]);
-  if (leftReal === rightReal) return true;
-  const [leftStat, rightStat] = await Promise.all([
-    fs.stat(left).catch(() => null),
-    fs.stat(right).catch(() => null),
-  ]);
-  return leftStat != null && rightStat != null && leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
-}
-const CODEX2_SAME_AS_1 = CODEX2_CANDIDATE != null && await sameCredentialFile(CODEX2_CANDIDATE, CODEX1_AUTH_PATH);
-const CODEX2_AUTH_PATH = CODEX2_SAME_AS_1 ? null : CODEX2_CANDIDATE;
+  : claude2Enabled
+    ? `claude2 enabled (cliproxyapi email: ${CLAUDE2_EMAIL})`
+    : `claude2 disabled (CLIPROXYAPI_CLAUDE2_EMAIL unset or no matching cliproxyapi account)`);
 console.log(CODEX2_OFF
   ? "codex2 disabled (CODEX2_ENABLED=false)"
-  : CODEX2_SAME_AS_1
-    ? `codex2 disabled: CODEX2_AUTH_PATH resolves to account 1's auth file (${CODEX2_CANDIDATE})`
-    : CODEX2_AUTH_PATH
-      ? `codex2 enabled (auth: ${CODEX2_AUTH_PATH})`
-      : `codex2 disabled (CODEX2_AUTH_PATH unset, no file at ${CODEX2_DEFAULT_PATH})`);
+  : codex2Enabled
+    ? `codex2 enabled (cliproxyapi email: ${CODEX2_EMAIL})`
+    : `codex2 disabled (no cliproxyapi codex account for ${CODEX2_EMAIL})`);
 
-const claude = new Poller("claude", fetchClaudeUsage, remember("claude"));
-const claude2 = CLAUDE2_CREDS_PATH ? new Poller("claude2", () => fetchClaudeUsage(CLAUDE2_CREDS_PATH), remember("claude2")) : null;
-const codex = new Poller("codex", createCodexUsageFetcher({ authPath: CODEX1_AUTH_PATH }), remember("codex"));
-const codex2 = CODEX2_AUTH_PATH
-  ? new Poller("codex2", createCodexUsageFetcher({ authPath: CODEX2_AUTH_PATH }), remember("codex2"))
-  : null;
+const claude = new Poller("claude", () => fetchClaudeUsage(CLAUDE_EMAIL), remember("claude"));
+const claude2 = claude2Enabled ? new Poller("claude2", () => fetchClaudeUsage(CLAUDE2_EMAIL), remember("claude2")) : null;
+const codex = new Poller("codex", () => fetchCodexUsage(CODEX_EMAIL), remember("codex"));
+const codex2 = codex2Enabled ? new Poller("codex2", () => fetchCodexUsage(CODEX2_EMAIL), remember("codex2")) : null;
 const zai = ZAI_KEY ? new Poller("zai", () => fetchZaiUsage(ZAI_KEY), remember("zai")) : null;
 const openrouter = OPENROUTER_KEY ? new Poller("openrouter", () => fetchOpenRouterUsage(OPENROUTER_KEY), remember("openrouter")) : null;
 const openai = OPENAI_KEY ? new Poller("openai", () => fetchOpenAiUsage(OPENAI_KEY), remember("openai")) : null;

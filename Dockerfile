@@ -6,6 +6,12 @@ ARG CLAUDE_CODE_VERSION=2.1.207
 WORKDIR /app
 RUN chown node:node /app
 
+# This host's Docker bridge network can silently black-hole outbound IPv6
+# connections (no rejection, no response) instead of failing fast, which
+# hangs npm indefinitely mid-registry-fetch. Force Node's DNS resolver to
+# prefer IPv4 records so npm/Codex/Claude Code never attempt the dead route.
+ENV NODE_OPTIONS=--dns-result-order=ipv4first
+
 # Keep the authentication CLIs in the main service so its Dokploy terminal can
 # renew the same credential volume the API reads.
 RUN apt-get update \

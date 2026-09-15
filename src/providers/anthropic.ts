@@ -7,7 +7,7 @@
  * GET /v0/management/auth-files avoids usage-api managing its own Claude
  * OAuth credential file and token refresh.
  */
-import { CpaAuthFile, findAuthFile, unixSecondsToIso } from "./cliproxyapi.js";
+import { callThroughCliProxy, CpaAuthFile, findAuthFile, unixSecondsToIso } from "./cliproxyapi.js";
 
 export interface ClaudeWindow {
   utilization: number;
@@ -57,6 +57,57 @@ function modelWindow(entry: CpaAuthFile, modelIds: string[], prefix: "5h" | "7d"
   return null;
 }
 
+const PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
+// Subscription tier changes about never, so this is cached far beyond the
+// poll interval; a stale label is much cheaper than a round trip per tick.
+const PROFILE_TTL_MS = 30 * 60_000;
+
+interface AnthropicProfile {
+  account?: { has_claude_max?: boolean; has_claude_pro?: boolean };
+  organization?: { organization_type?: string; rate_limit_tier?: string };
+}
+
+const profileCache = new Map<string, { at: number; label: string | null }>();
+
+// Anthropic spreads the plan across three fields and none of them is a display
+// string: has_claude_max/has_claude_pro pick the family, while rate_limit_tier
+// is the only place the Max multiplier appears (e.g. "...claude_max_20x").
+// Match on the multiplier substring so a prefix change upstream doesn't matter.
+function planLabel(profile: AnthropicProfile): string | null {
+  const account = profile.account ?? {};
+  const tier = profile.organization?.rate_limit_tier ?? "";
+  if (account.has_claude_max) {
+    if (/20x/i.test(tier)) return "Max 20x";
+    if (/5x/i.test(tier)) return "Max 5x";
+    return "Max";
+  }
+  if (account.has_claude_pro) return "Pro";
+  const orgType = profile.organization?.organization_type ?? "";
+  if (/enterprise/i.test(orgType)) return "Enterprise";
+  if (/team/i.test(orgType)) return "Team";
+  return null;
+}
+
+// Best-effort: the tier is a label, never a measurement, so a failure here
+// degrades to null (or the last known value) instead of failing the poll.
+async function fetchSubscriptionType(entry: CpaAuthFile): Promise<string | null> {
+  const cached = profileCache.get(entry.auth_index);
+  if (cached && Date.now() - cached.at < PROFILE_TTL_MS) return cached.label;
+  try {
+    const { status, body } = await callThroughCliProxy(entry.auth_index, "GET", PROFILE_URL, {
+      Authorization: "Bearer $TOKEN$",
+      "anthropic-beta": "oauth-2025-04-20",
+      Accept: "application/json",
+    });
+    if (status !== 200) return cached?.label ?? null;
+    const label = planLabel(JSON.parse(body) as AnthropicProfile);
+    profileCache.set(entry.auth_index, { at: Date.now(), label });
+    return label;
+  } catch {
+    return cached?.label ?? null;
+  }
+}
+
 export async function fetchClaudeUsage(email?: string): Promise<ClaudeUsage> {
   const entry = await findAuthFile("claude", email);
   const signals = entry.quota?.signals;
@@ -67,8 +118,8 @@ export async function fetchClaudeUsage(email?: string): Promise<ClaudeUsage> {
     seven_day_opus: modelWindow(entry, ["claude-opus-5"], "7d"),
     seven_day_design: modelWindow(entry, ["claude-design", "claude-omelette"], "7d"),
     seven_day_fable: modelWindow(entry, ["claude-fable-5-1", "claude-fable-5"], "7d"),
-    // CLIProxyAPI's auth-files response doesn't carry the Anthropic
-    // subscription tier; not worth a second round trip just for a label.
-    subscription_type: null,
+    // CLIProxyAPI's auth-files snapshot has no tier field, so this is the
+    // one extra (cached) call Claude needs.
+    subscription_type: await fetchSubscriptionType(entry),
   };
 }

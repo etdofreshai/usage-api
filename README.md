@@ -133,34 +133,21 @@ App: `usage-api`
 Domain: `usage.etdofresh.com`
 Named volumes:
 
-- `usage-api-auth` mounted at `/home/node/auth` — **no longer read by this
-  service now that Claude/Codex go through CLIProxyAPI.** Keeping the volume
-  around is harmless; removing it and the `usage-auth` CLI/companion
-  container below is a separate cleanup step, not done as part of this
-  change.
+- `usage-api-auth`, previously mounted at `/home/node/auth` — **no longer
+  used.** The image no longer declares this path as a volume and nothing in
+  the app reads or writes it now that Claude/Codex go through CLIProxyAPI.
+  Dokploy's own mount config for this volume can be removed at any time;
+  leaving it in place is harmless (the container just gets an empty,
+  ignored mount).
 - `usage-api-data` mounted at `/home/node/data` for usage history
 
-### Renew OAuth credentials (legacy — pre-CLIProxyAPI)
+### Renewing OAuth credentials (moved to CLIProxyAPI)
 
-This section described renewing the Claude/Codex OAuth files this container
-used to manage directly. It's no longer needed for that purpose: those
-accounts now live in CLIProxyAPI, and refreshing them is CLIProxyAPI's job
-(see its own `-claude-login` / `-codex-login` / `-codex-device-login`
-flags). Kept here for reference until the `usage-api-auth` volume and
-`usage-auth` companion tooling are formally retired.
-
-The main Usage API image includes the Claude and Codex CLIs. Open the Usage API
-application's Dokploy terminal and use:
-
-```sh
-usage-auth status
-usage-auth claude
-usage-auth claude2
-usage-auth codex
-usage-auth codex2
-```
-
-The helper reads and writes the existing `usage-api-auth` volume. The Codex
-commands use separate `CODEX_HOME` directories and device-code authentication
-for the headless container. Run `usage-auth codex2` and complete the login as
-the second account; the helper never prints or copies tokens.
+This container used to bundle the Claude Code and Codex CLIs and a
+`usage-auth status|claude|claude2|codex|codex2` helper script so its own
+Dokploy terminal could renew the OAuth files it read directly. Both are
+removed: Claude/Codex accounts now live entirely in CLIProxyAPI, and
+renewing them is CLIProxyAPI's job (`-claude-login` / `-codex-login` /
+`-codex-device-login` on that server, or its own management UI/API). This
+also dropped the slowest, most failure-prone layer of this image's build —
+the global `npm install -g` of both CLIs.

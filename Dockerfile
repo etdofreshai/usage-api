@@ -1,38 +1,30 @@
 FROM node:22-slim
 
-ARG CODEX_VERSION=0.144.1
-ARG CLAUDE_CODE_VERSION=2.1.207
-
 WORKDIR /app
 RUN chown node:node /app
 
-# This host's Docker bridge network can silently black-hole outbound IPv6
-# connections (no rejection, no response) instead of failing fast, which
-# hangs npm indefinitely mid-registry-fetch. Force Node's DNS resolver to
-# prefer IPv4 records so npm/Codex/Claude Code never attempt the dead route.
+# Best-effort defensive measure: this host's Docker bridge network has shown
+# outbound IPv6 connections stall without an error, which can hang npm mid
+# install. Prefer IPv4 DNS results so npm/tsc's install step doesn't attempt
+# a route that may not work.
 ENV NODE_OPTIONS=--dns-result-order=ipv4first
 
-# Keep the authentication CLIs in the main service so its Dokploy terminal can
-# renew the same credential volume the API reads.
+# Claude/Codex OAuth is now CLIProxyAPI's responsibility (see README), so
+# this image no longer needs the Claude Code / Codex CLIs installed just to
+# run `usage-auth` — that script (and its `npm install -g` step, which was
+# also the slowest and most failure-prone layer in this build) is retired
+# along with the credential volume it renewed. `curl`/`less` stay for
+# general container debugging via the Dokploy terminal.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl less \
-    && rm -rf /var/lib/apt/lists/* \
-    && npm install -g \
-      "@openai/codex@${CODEX_VERSION}" \
-      "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+    && rm -rf /var/lib/apt/lists/*
 
 # Persistent data directory for history (created as root before USER node)
 RUN mkdir -p /home/node/data && chown node:node /home/node/data
 VOLUME /home/node/data
 
-# Usage API owns a separate credential volume. The entrypoint seeds it from
-# the legacy ai-sessions bind mounts on the first deployment only.
-RUN mkdir -p /home/node/auth && chown node:node /home/node/auth
-VOLUME /home/node/auth
-
 COPY scripts/docker-entrypoint.sh /usr/local/bin/usage-api-entrypoint
-COPY scripts/usage-auth.sh /usr/local/bin/usage-auth
-RUN chmod 755 /usr/local/bin/usage-api-entrypoint /usr/local/bin/usage-auth
+RUN chmod 755 /usr/local/bin/usage-api-entrypoint
 
 USER node
 
@@ -48,8 +40,5 @@ ENV PORT=3000
 EXPOSE 3000
 
 ENV USAGE_HISTORY_FILE=/home/node/data/usage-history.jsonl
-ENV CLAUDE_CREDENTIALS_PATH=/home/node/auth/.claude/.credentials.json
-ENV CLAUDE2_CREDENTIALS_PATH=/home/node/auth/.claude2/.credentials.json
-ENV CODEX_AUTH_PATH=/home/node/auth/.codex/auth.json
 
 CMD ["usage-api-entrypoint"]

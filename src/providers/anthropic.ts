@@ -35,14 +35,56 @@ function windowFromSignals(signals: Record<string, string> | undefined, prefix: 
   const utilRaw = signals[`Anthropic-Ratelimit-Unified-${prefix}-Utilization`];
   if (utilRaw === undefined) return null;
   const fraction = Number(utilRaw);
+  // An unreadable number is absent data, not zero usage. Returning null lets the
+  // caller fall back to what it already knows instead of inventing a figure.
+  if (!Number.isFinite(fraction)) return null;
   return {
-    utilization: Number.isFinite(fraction) ? fraction * 100 : 0,
+    utilization: fraction * 100,
     resets_at: unixSecondsToIso(signals[`Anthropic-Ratelimit-Unified-${prefix}-Reset`]),
   };
 }
 
-function accountWindow(signals: Record<string, string> | undefined, prefix: "5h" | "7d"): ClaudeWindow {
-  return windowFromSignals(signals, prefix) ?? { utilization: 0, resets_at: null };
+// CLIProxyAPI rewrites the auth file every time it refreshes the OAuth token,
+// and the cached header snapshot does not survive that rewrite. Until the next
+// real request repopulates it, `quota.signals` is simply absent — which is not
+// remotely the same thing as "zero percent used", though that is what the old
+// `?? 0` fallback reported. Idle accounts therefore read 0% until they were
+// used again.
+//
+// Anthropic's utilization only ever climbs within a window, so the previous
+// reading stays true for the rest of that window. Carrying it forward is a
+// sound floor rather than a guess. Once the window's own reset passes, the
+// spend really is gone and zero becomes the honest answer.
+export function carryForwardWindow(
+  fresh: ClaudeWindow | null,
+  cached: ClaudeWindow | undefined,
+  nowMs: number,
+): ClaudeWindow {
+  if (fresh) return fresh;
+  if (cached?.resets_at) {
+    const resetMs = Date.parse(cached.resets_at);
+    if (Number.isFinite(resetMs) && resetMs > nowMs) return cached;
+  }
+  return { utilization: 0, resets_at: null };
+}
+
+// Keyed by account and window, so a second Claude account cannot inherit the
+// first one's numbers.
+const lastGoodWindows = new Map<string, ClaudeWindow>();
+
+function accountWindow(
+  accountKey: string,
+  signals: Record<string, string> | undefined,
+  prefix: "5h" | "7d",
+  nowMs: number,
+): ClaudeWindow {
+  const cacheKey = `${accountKey}:${prefix}`;
+  const result = carryForwardWindow(windowFromSignals(signals, prefix), lastGoodWindows.get(cacheKey), nowMs);
+  // Remember only real readings; a rolled-over window must not be resurrected
+  // by the next gap.
+  if (result.resets_at) lastGoodWindows.set(cacheKey, result);
+  else lastGoodWindows.delete(cacheKey);
+  return result;
 }
 
 // Model IDs are whatever CLIProxyAPI's own model catalog calls them; try a
@@ -111,9 +153,11 @@ async function fetchSubscriptionType(entry: CpaAuthFile): Promise<string | null>
 export async function fetchClaudeUsage(email?: string): Promise<ClaudeUsage> {
   const entry = await findAuthFile("claude", email);
   const signals = entry.quota?.signals;
+  const accountKey = entry.auth_index || email || "claude";
+  const nowMs = Date.now();
   return {
-    five_hour: accountWindow(signals, "5h"),
-    seven_day: accountWindow(signals, "7d"),
+    five_hour: accountWindow(accountKey, signals, "5h", nowMs),
+    seven_day: accountWindow(accountKey, signals, "7d", nowMs),
     seven_day_sonnet: modelWindow(entry, ["claude-sonnet-5"], "7d"),
     seven_day_opus: modelWindow(entry, ["claude-opus-5"], "7d"),
     seven_day_design: modelWindow(entry, ["claude-design", "claude-omelette"], "7d"),

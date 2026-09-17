@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { HistoryStore, extractUsageMetrics } from "../src/history.ts";
 
 test("extractUsageMetrics finds percentage windows without token details", () => {
@@ -93,4 +96,33 @@ test("HistoryStore can aggregate percentage samples into hourly and daily graph 
   assert.deepEqual(daily.series[0].points.map((p) => ({ t: p.t, value: p.value, min: p.min, max: p.max, count: p.count })), [
     { t: "2026-01-02T00:00:00.000Z", value: 23.333, min: 10, max: 40, count: 3 },
   ]);
+});
+
+test("HistoryStore load keeps good records when a line is corrupt", async () => {
+  // An append interrupted mid-write leaves a truncated line behind. Before,
+  // one such line threw during load and silently discarded every sample in
+  // the file; a real history of 339k records was lost to three bad ones.
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "usage-history-"));
+  const filePath = path.join(dir, "usage-history.jsonl");
+  const good = (iso: string, value: number) =>
+    JSON.stringify({ ts: iso, provider: "codex", metrics: [{ metric: "primary", value, resetIso: null }] });
+
+  await fs.writeFile(
+    filePath,
+    [
+      good("2026-01-02T01:00:00.000Z", 10),
+      '{"ts":"2026-01-02T01:30:00.000Z","provider":"codex","metrics":[{"metric":"prim',
+      good("2026-01-02T02:00:00.000Z", 30),
+    ].join("\n") + "\n",
+    "utf8",
+  );
+
+  try {
+    const store = new HistoryStore({ filePath, retentionMs: Infinity });
+    await store.load();
+    const points = store.toSeries("fine").series[0].points;
+    assert.deepEqual(points.map((p) => p.value), [10, 30]);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });

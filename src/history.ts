@@ -127,11 +127,27 @@ export class HistoryStore {
     }
     try {
       const raw = await fs.readFile(this.filePath, "utf8");
-      this.records = raw
-        .split(/\r?\n/)
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as HistoryRecord)
-        .filter((record) => record.metrics.length > 0);
+      // A single malformed line must not cost the whole history. An
+      // interrupted append can leave one truncated record behind, and
+      // parsing the file as an all-or-nothing batch turned those few bytes
+      // into a total loss of every prior sample.
+      let skipped = 0;
+      const records: HistoryRecord[] = [];
+      for (const line of raw.split(/\r?\n/)) {
+        if (!line) continue;
+        let record: HistoryRecord;
+        try {
+          record = JSON.parse(line) as HistoryRecord;
+        } catch {
+          skipped++;
+          continue;
+        }
+        if (record?.metrics?.length) records.push(record);
+      }
+      this.records = records;
+      if (skipped > 0) {
+        console.warn(`usage history: skipped ${skipped} unparsable line(s) in ${this.filePath}, kept ${records.length}`);
+      }
       this.prune();
     } catch (err: any) {
       if (err?.code !== "ENOENT") console.warn(`could not load usage history ${this.filePath}: ${err?.message ?? err}`);

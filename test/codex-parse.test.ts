@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { RateLimitError } from "../src/cache.ts";
 import { createCodexUsageFetcher, parseCodexUsage, parseResetCredits } from "../src/providers/codex.ts";
+import type { RouterConnection } from "../src/providers/ninerouter.ts";
 
 const fiveHourRaw = {
   used_percent: 18,
@@ -16,100 +15,103 @@ const sevenDayRaw = {
   reset_at: 1785259658,
 };
 
-const usageResponse = () => new Response(JSON.stringify({
+const usageResponse = (extra: object = {}) => new Response(JSON.stringify({
   plan_type: "pro",
   rate_limit: { primary_window: fiveHourRaw, secondary_window: sevenDayRaw },
+  ...extra,
 }), { headers: { "Content-Type": "application/json" } });
 
-async function withAuthFile<T>(auth: object, run: (authPath: string) => Promise<T>): Promise<T> {
-  const directory = await mkdtemp(path.join(tmpdir(), "usage-api-codex-auth-"));
-  const authPath = path.join(directory, "auth.json");
-  await writeFile(authPath, JSON.stringify(auth), { mode: 0o600 });
-  try {
-    return await run(authPath);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-}
+const connection = (accessToken: string): RouterConnection => ({
+  id: "conn-1",
+  provider: "codex",
+  name: "etdofresh@gmail.com",
+  email: "etdofresh@gmail.com",
+  accessToken,
+  expiresAt: null,
+});
 
 function headersOf(init?: RequestInit): Headers {
   return new Headers(init?.headers);
 }
 
-test("Codex refresh persists a rotated refresh token with the new access token", async () => {
-  await withAuthFile({ tokens: { access_token: "old-access", refresh_token: "old-refresh", account_id: "account" }, preserved: true }, async (authPath) => {
-    const fetcher = createCodexUsageFetcher({
-      authPath,
-      fetchImpl: (async (input, init) => {
-        const url = String(input);
-        if (url === "https://auth.openai.com/oauth/token") {
-          assert.match(String(init?.body), /old-refresh/);
-          return new Response(JSON.stringify({ access_token: "new-access", refresh_token: "new-refresh" }), { headers: { "Content-Type": "application/json" } });
-        }
-        if (url.endsWith("/rate-limit-reset-credits")) return new Response("", { status: 404 });
-        if (headersOf(init).get("Authorization") === "Bearer old-access") return new Response("", { status: 401 });
-        assert.equal(headersOf(init).get("Authorization"), "Bearer new-access");
-        assert.equal(headersOf(init).get("ChatGPT-Account-Id"), "account");
-        return usageResponse();
-      }) as typeof fetch,
-    });
-
-    const usage = await fetcher();
-    assert.equal(usage.five_hour?.used_percent, 18);
-    assert.deepEqual(JSON.parse(await readFile(authPath, "utf8")), {
-      tokens: { access_token: "new-access", refresh_token: "new-refresh", account_id: "account" },
-      preserved: true,
-    });
+// 9router owns the OAuth account and refreshes the token; usage-api must send
+// whatever token the connection store currently holds, without caching one of
+// its own across calls.
+test("Codex usage is requested with the token 9router currently holds", async () => {
+  const seen: string[] = [];
+  let current = "first-token";
+  const fetcher = createCodexUsageFetcher({
+    resolveConnection: (account) => {
+      assert.equal(account, "etdofresh@gmail.com");
+      return connection(current);
+    },
+    fetchImpl: (async (_input, init) => {
+      seen.push(String(headersOf(init).get("Authorization")));
+      return usageResponse();
+    }) as typeof fetch,
   });
+
+  await fetcher("etdofresh@gmail.com");
+  current = "rotated-token";
+  await fetcher("etdofresh@gmail.com");
+
+  assert.deepEqual(seen, ["Bearer first-token", "Bearer rotated-token"]);
 });
 
-test("Codex refresh is single-flight for concurrent 401 responses", async () => {
-  await withAuthFile({ access_token: "old-access", refresh_token: "old-refresh" }, async (authPath) => {
-    let refreshCalls = 0;
-    let releaseRefresh!: () => void;
-    const refreshReleased = new Promise<void>((resolve) => { releaseRefresh = resolve; });
-    let refreshStarted!: () => void;
-    const started = new Promise<void>((resolve) => { refreshStarted = resolve; });
-    const fetcher = createCodexUsageFetcher({
-      authPath,
-      fetchImpl: (async (input, init) => {
-        const url = String(input);
-        if (url === "https://auth.openai.com/oauth/token") {
-          refreshCalls += 1;
-          refreshStarted();
-          await refreshReleased;
-          return new Response(JSON.stringify({ access_token: "new-access", refresh_token: "new-refresh" }), { headers: { "Content-Type": "application/json" } });
-        }
-        if (url.endsWith("/rate-limit-reset-credits")) return new Response("", { status: 404 });
-        return headersOf(init).get("Authorization") === "Bearer old-access"
-          ? new Response("", { status: 401 })
-          : usageResponse();
-      }) as typeof fetch,
-    });
-
-    const first = fetcher();
-    await started;
-    const second = fetcher();
-    await Promise.resolve();
-    assert.equal(refreshCalls, 1);
-    releaseRefresh();
-    await Promise.all([first, second]);
-    assert.equal(refreshCalls, 1);
+// The usage response already carries the count, so the detail request only
+// earns its keep when there is a credit to describe.
+test("reset-credit detail is skipped when the usage response reports none available", async () => {
+  const urls: string[] = [];
+  const fetcher = createCodexUsageFetcher({
+    resolveConnection: () => connection("token"),
+    fetchImpl: (async (input) => {
+      urls.push(String(input));
+      return usageResponse({ rate_limit_reset_credits: { available_count: 0 } });
+    }) as typeof fetch,
   });
+
+  const usage = await fetcher();
+
+  assert.deepEqual(urls, ["https://chatgpt.com/backend-api/wham/usage"]);
+  assert.deepEqual(usage.reset_credits, { available_count: 0, next_expires_at: null, credits: [] });
 });
 
-test("failed Codex refresh leaves credentials unchanged", async () => {
-  const original = { access_token: "old-access", refresh_token: "old-refresh", account_id: "account" };
-  await withAuthFile(original, async (authPath) => {
-    const fetcher = createCodexUsageFetcher({
-      authPath,
-      fetchImpl: (async (input) => String(input) === "https://auth.openai.com/oauth/token"
-        ? new Response(JSON.stringify({ error: "rejected" }), { status: 401, headers: { "Content-Type": "application/json" } })
-        : new Response("", { status: 401 })) as typeof fetch,
-    });
+test("reset-credit detail is fetched when the usage response reports credits", async () => {
+  const urls: string[] = [];
+  const fetcher = createCodexUsageFetcher({
+    resolveConnection: () => connection("token"),
+    fetchImpl: (async (input) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.endsWith("/rate-limit-reset-credits")) {
+        return new Response(JSON.stringify({
+          available_count: 1,
+          credits: [{ status: "available", granted_at: "2026-09-01T00:00:00Z", expires_at: "2026-09-30T00:00:00Z" }],
+        }), { headers: { "Content-Type": "application/json" } });
+      }
+      return usageResponse({ rate_limit_reset_credits: { available_count: 1 } });
+    }) as typeof fetch,
+  });
 
-    await assert.rejects(fetcher(), /codex token refresh failed: HTTP 401/);
-    assert.deepEqual(JSON.parse(await readFile(authPath, "utf8")), original);
+  const usage = await fetcher();
+
+  assert.equal(urls.length, 2);
+  assert.equal(usage.reset_credits?.available_count, 1);
+  assert.equal(usage.reset_credits?.next_expires_at, "2026-09-30T00:00:00Z");
+});
+
+// A 429 must reach the poller as a RateLimitError so it backs off rather than
+// hammering OpenAI on the next tick.
+test("a rate-limited usage response surfaces Retry-After to the poller", async () => {
+  const fetcher = createCodexUsageFetcher({
+    resolveConnection: () => connection("token"),
+    fetchImpl: (async () => new Response("", { status: 429, headers: { "retry-after": "120" } })) as typeof fetch,
+  });
+
+  await assert.rejects(fetcher(), (err: unknown) => {
+    assert.ok(err instanceof RateLimitError);
+    assert.equal(err.retryAfterSec, 120);
+    return true;
   });
 });
 

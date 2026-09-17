@@ -9,12 +9,12 @@ RUN chown node:node /app
 # a route that may not work.
 ENV NODE_OPTIONS=--dns-result-order=ipv4first
 
-# Claude/Codex OAuth is now CLIProxyAPI's responsibility (see README), so
-# this image no longer needs the Claude Code / Codex CLIs installed just to
-# run `usage-auth` — that script (and its `npm install -g` step, which was
-# also the slowest and most failure-prone layer in this build) is retired
-# along with the credential volume it renewed. `curl`/`less` stay for
-# general container debugging via the Dokploy terminal.
+# Claude/Codex OAuth is 9router's responsibility (see README), so this image
+# does not need the Claude Code / Codex CLIs installed just to run
+# `usage-auth` — that script (and its `npm install -g` step, which was also
+# the slowest and most failure-prone layer in this build) is retired along
+# with the credential volume it renewed. `curl`/`less` stay for general
+# container debugging via the Dokploy terminal.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl less \
     && rm -rf /var/lib/apt/lists/*

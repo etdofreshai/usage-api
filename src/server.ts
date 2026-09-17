@@ -29,7 +29,7 @@ try {
 }
 import { fetchClaudeUsage } from "./providers/anthropic.js";
 import { fetchCodexUsage } from "./providers/codex.js";
-import { listAuthFiles } from "./providers/cliproxyapi.js";
+import { hasConnection, listConnections } from "./providers/ninerouter.js";
 import { fetchZaiUsage } from "./providers/zai.js";
 import { fetchOpenRouterUsage } from "./providers/openrouter.js";
 import { fetchOpenAiUsage } from "./providers/openai.js";
@@ -70,50 +70,51 @@ const ZAI_KEY = process.env.ZAI_API_KEY ?? process.env.ZAI_TOKEN;
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY ?? process.env.OPENROUTER_TOKEN;
 const OPENAI_KEY = process.env.OPENAI_ADMIN_KEY; // requires sk-admin-* — keep explicit
 
-// All Claude/Codex account resolution now goes through ET's CLIProxyAPI
-// server, which already owns the OAuth-authenticated accounts and their
-// token refresh. usage-api just asks it which accounts exist and reads the
-// rate-limit headers CLIProxyAPI already captured from real traffic —
-// see providers/cliproxyapi.ts.
-const CLAUDE_EMAIL = process.env.CLIPROXYAPI_CLAUDE_EMAIL?.trim() || undefined;
-const CLAUDE2_EMAIL = process.env.CLIPROXYAPI_CLAUDE2_EMAIL?.trim() || undefined;
-const CODEX_EMAIL = process.env.CLIPROXYAPI_CODEX_EMAIL?.trim() || "etdofresh@gmail.com";
-const CODEX2_EMAIL = process.env.CLIPROXYAPI_CODEX2_EMAIL?.trim() || "etdofresh+dev@gmail.com";
+// All Claude/Codex account resolution now goes through ET's 9router, which
+// owns the OAuth-authenticated accounts and keeps their tokens refreshed.
+// usage-api borrows the current token and calls Anthropic/OpenAI directly —
+// see providers/ninerouter.js.
+//
+// An account is named by whichever identifier 9router records for it:
+// Codex connections carry an email, Claude ones may only have a display
+// name ("Account 1").
+const CLAUDE_ACCOUNT = process.env.NINEROUTER_CLAUDE_ACCOUNT?.trim() || undefined;
+const CLAUDE2_ACCOUNT = process.env.NINEROUTER_CLAUDE2_ACCOUNT?.trim() || undefined;
+const CODEX_ACCOUNT = process.env.NINEROUTER_CODEX_ACCOUNT?.trim() || "etdofresh@gmail.com";
+const CODEX2_ACCOUNT = process.env.NINEROUTER_CODEX2_ACCOUNT?.trim() || "etdofresh+dev@gmail.com";
 
 // CLAUDE2_ENABLED / CODEX2_ENABLED remain hard kill switches. Otherwise a
-// second account is only started when CLIProxyAPI actually has a matching
-// "claude"/"codex" entry for that email at startup, so an unconfigured
-// second account stays silently absent from /api/usage instead of a poller
-// erroring on every tick.
+// second account is only started when 9router actually has a matching
+// "claude"/"codex" connection at startup, so an unconfigured second account
+// stays silently absent from /api/usage instead of a poller erroring on
+// every tick.
 const CLAUDE2_OFF = /^(0|false|no|off)$/i.test((process.env.CLAUDE2_ENABLED ?? "").trim());
 const CODEX2_OFF = /^(0|false|no|off)$/i.test((process.env.CODEX2_ENABLED ?? "").trim());
 
-let cpaAccounts: Awaited<ReturnType<typeof listAuthFiles>> = [];
 try {
-  cpaAccounts = await listAuthFiles();
+  const connections = listConnections();
+  console.log(`9router connections: ${connections.map((c) => `${c.provider}:${c.email ?? c.name}`).join(", ") || "none"}`);
 } catch (err: any) {
-  console.warn(`could not reach cliproxyapi at startup: ${err?.message ?? err}`);
+  console.warn(`could not read 9router's connection store at startup: ${err?.message ?? err}`);
 }
-const hasCpaAccount = (provider: string, email: string | undefined) =>
-  cpaAccounts.some((f) => f.provider === provider && (email ? f.email === email : true));
 
-const claude2Enabled = !CLAUDE2_OFF && !!CLAUDE2_EMAIL && hasCpaAccount("claude", CLAUDE2_EMAIL);
-const codex2Enabled = !CODEX2_OFF && hasCpaAccount("codex", CODEX2_EMAIL);
+const claude2Enabled = !CLAUDE2_OFF && !!CLAUDE2_ACCOUNT && hasConnection("claude", CLAUDE2_ACCOUNT);
+const codex2Enabled = !CODEX2_OFF && hasConnection("codex", CODEX2_ACCOUNT);
 console.log(CLAUDE2_OFF
   ? "claude2 disabled (CLAUDE2_ENABLED=false)"
   : claude2Enabled
-    ? `claude2 enabled (cliproxyapi email: ${CLAUDE2_EMAIL})`
-    : `claude2 disabled (CLIPROXYAPI_CLAUDE2_EMAIL unset or no matching cliproxyapi account)`);
+    ? `claude2 enabled (9router account: ${CLAUDE2_ACCOUNT})`
+    : `claude2 disabled (NINEROUTER_CLAUDE2_ACCOUNT unset or no matching 9router connection)`);
 console.log(CODEX2_OFF
   ? "codex2 disabled (CODEX2_ENABLED=false)"
   : codex2Enabled
-    ? `codex2 enabled (cliproxyapi email: ${CODEX2_EMAIL})`
-    : `codex2 disabled (no cliproxyapi codex account for ${CODEX2_EMAIL})`);
+    ? `codex2 enabled (9router account: ${CODEX2_ACCOUNT})`
+    : `codex2 disabled (no 9router codex connection for ${CODEX2_ACCOUNT})`);
 
-const claude = new Poller("claude", () => fetchClaudeUsage(CLAUDE_EMAIL), remember("claude"));
-const claude2 = claude2Enabled ? new Poller("claude2", () => fetchClaudeUsage(CLAUDE2_EMAIL), remember("claude2")) : null;
-const codex = new Poller("codex", () => fetchCodexUsage(CODEX_EMAIL), remember("codex"));
-const codex2 = codex2Enabled ? new Poller("codex2", () => fetchCodexUsage(CODEX2_EMAIL), remember("codex2")) : null;
+const claude = new Poller("claude", () => fetchClaudeUsage(CLAUDE_ACCOUNT), remember("claude"));
+const claude2 = claude2Enabled ? new Poller("claude2", () => fetchClaudeUsage(CLAUDE2_ACCOUNT), remember("claude2")) : null;
+const codex = new Poller("codex", () => fetchCodexUsage(CODEX_ACCOUNT), remember("codex"));
+const codex2 = codex2Enabled ? new Poller("codex2", () => fetchCodexUsage(CODEX2_ACCOUNT), remember("codex2")) : null;
 const zai = ZAI_KEY ? new Poller("zai", () => fetchZaiUsage(ZAI_KEY), remember("zai")) : null;
 const openrouter = OPENROUTER_KEY ? new Poller("openrouter", () => fetchOpenRouterUsage(OPENROUTER_KEY), remember("openrouter")) : null;
 const openai = OPENAI_KEY ? new Poller("openai", () => fetchOpenAiUsage(OPENAI_KEY), remember("openai")) : null;

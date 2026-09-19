@@ -75,6 +75,7 @@
   .bar.warn > .fill { background: var(--warn); }
   .bar.bad > .fill { background: var(--bad); }
   .sub { color: var(--muted); font-size: 12px; margin-top: 4px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .spend-line { font-variant-numeric: tabular-nums; color: #f0c674; white-space: nowrap; }
   .group-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; margin: 14px 0 4px; padding-top: 8px; border-top: 1px dashed var(--border); }
   .err { color: var(--bad); font-size: 12px; padding: 6px 0; white-space: pre-wrap; }
   .empty { color: var(--muted); font-size: 12px; }
@@ -285,6 +286,16 @@ function renderZai(snap) {
   if (d.monthly) out += metricRow("monthly", d.monthly.used_percent, d.monthly.expected_percent, d.monthly.resets_at);
   return out || `<div class="empty">no metrics</div>`;
 }
+function fmtUsd(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return "$" + n.toFixed(n < 0.01 ? 4 : n < 1 ? 3 : 2);
+}
+function renderJev(snap) {
+  const d = snap.data;
+  if (!d) return `<div class="empty">no data yet</div>`;
+  return `<div class="spend-line">1d ${fmtUsd(d.spend_1d)} · 3d ${fmtUsd(d.spend_3d)} · 7d ${fmtUsd(d.spend_7d)}</div>`;
+}
 function renderRaw(snap) {
   const d = snap.data;
   if (!d) return `<div class="empty">no data yet</div>`;
@@ -298,6 +309,7 @@ const PROVIDER_LINKS = {
   codex: "https://chatgpt.com/codex/cloud/settings/analytics#usage",
   codex2: "https://chatgpt.com/codex/cloud/settings/analytics#usage",
   zai: "https://z.ai/manage-apikey/subscription#usage",
+  jev: "https://openrouter.ai/activity",
 };
 
 const PROVIDER_TITLES = {
@@ -313,6 +325,7 @@ const RENDERERS = {
   zai: renderZai,
   openrouter: renderRaw,
   openai: renderRaw,
+  jev: renderJev,
 };
 
 function statusDot(snap) {
@@ -823,7 +836,7 @@ async function tick() {
     if (j.providers.claude2) order.push("claude2");
     order.push("codex");
     if (j.providers.codex2?.data) order.push("codex2");
-    order.push("zai", "openrouter", "openai");
+    order.push("zai", "jev", "openrouter", "openai");
     grid.innerHTML = order.map(n => card(n, j.providers[n])).join("");
     if (latestHistory) renderHistory(latestHistory);
   } catch (err) {

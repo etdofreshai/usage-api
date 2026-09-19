@@ -54,6 +54,7 @@ env vars still override the file.
 | Codex #2 (optional) | 9router `codex` connection matching `NINEROUTER_CODEX2_ACCOUNT` |
 | Z.ai         | `ZAI_API_KEY` env                                       |
 | OpenRouter   | `OPENROUTER_API_KEY` env                                |
+| Jev spend    | 9gate `/_9gate/jev-spend` via `NINEGATE_URL`            |
 | OpenAI       | `OPENAI_ADMIN_KEY` env                                  |
 
 ### 9router source for Claude/Codex

@@ -33,6 +33,7 @@ import { hasConnection, listConnections } from "./providers/ninerouter.js";
 import { fetchZaiUsage } from "./providers/zai.js";
 import { fetchOpenRouterUsage } from "./providers/openrouter.js";
 import { fetchOpenAiUsage } from "./providers/openai.js";
+import { fetchJevUsage } from "./providers/jev.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 3000);
@@ -69,6 +70,7 @@ function remember<T>(provider: string): (data: T, fetchedAt: Date) => void {
 const ZAI_KEY = process.env.ZAI_API_KEY ?? process.env.ZAI_TOKEN;
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY ?? process.env.OPENROUTER_TOKEN;
 const OPENAI_KEY = process.env.OPENAI_ADMIN_KEY; // requires sk-admin-* — keep explicit
+const NINEGATE_URL = process.env.NINEGATE_URL ?? "http://etzminisforumx1pro.lan:20129";
 
 // All Claude/Codex account resolution now goes through ET's 9router, which
 // owns the OAuth-authenticated accounts and keeps their tokens refreshed.
@@ -118,6 +120,7 @@ const codex2 = codex2Enabled ? new Poller("codex2", () => fetchCodexUsage(CODEX2
 const zai = ZAI_KEY ? new Poller("zai", () => fetchZaiUsage(ZAI_KEY), remember("zai")) : null;
 const openrouter = OPENROUTER_KEY ? new Poller("openrouter", () => fetchOpenRouterUsage(OPENROUTER_KEY), remember("openrouter")) : null;
 const openai = OPENAI_KEY ? new Poller("openai", () => fetchOpenAiUsage(OPENAI_KEY), remember("openai")) : null;
+const jev = new Poller("jev", () => fetchJevUsage(NINEGATE_URL));
 
 claude.start();
 claude2?.start();
@@ -126,6 +129,7 @@ codex2?.start();
 zai?.start();
 openrouter?.start();
 openai?.start();
+jev.start();
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
@@ -233,6 +237,7 @@ app.get("/api/usage", (_req, res) => {
   providers.zai = zai ? enrichZai(zai.snapshot()) : { data: null, error: "ZAI_API_KEY not set" };
   providers.openrouter = openrouter?.snapshot() ?? { data: null, error: "OPENROUTER_API_KEY not set" };
   providers.openai = openai?.snapshot() ?? { data: null, error: "OPENAI_ADMIN_KEY not set" };
+  providers.jev = jev.snapshot();
   res.json({
     timestamp: new Date().toISOString(),
     providers,

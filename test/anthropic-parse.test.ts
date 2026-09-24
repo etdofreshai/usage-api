@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseClaudeUsage } from "../src/providers/anthropic.ts";
+import { parseClaudeResetCredits, parseClaudeUsage } from "../src/providers/anthropic.ts";
 
 test("parseClaudeUsage reads model-scoped weekly limits (Fable) from limits[]", () => {
   const usage = parseClaudeUsage({
@@ -68,4 +68,20 @@ test("parseClaudeUsage keeps legacy per-model fields when present and ignores ma
   assert.equal(usage.seven_day_design?.utilization, 5);
   // Malformed scoped entries are ignored rather than throwing.
   assert.equal(usage.seven_day_fable, null);
+});
+
+test("parseClaudeResetCredits counts grants and ignores ineligible responses", () => {
+  const rc = parseClaudeResetCredits({
+    eligible: true,
+    grants: [
+      { label: "launch", resets_left: 1, starts_at: "2026-09-22T16:00:00+00:00", ends_at: "2026-10-22T16:00:00+00:00", paused: false },
+      { label: "old", resets_left: 0, ends_at: "2026-09-30T00:00:00+00:00" },
+      { label: "held", resets_left: 1, ends_at: "2026-09-25T00:00:00+00:00", paused: true },
+    ],
+  });
+  assert.equal(rc?.available_count, 1);
+  assert.equal(rc?.next_expires_at, "2026-10-22T16:00:00+00:00");
+  assert.equal(rc?.credits.length, 2);
+  assert.equal(parseClaudeResetCredits({ eligible: false, grants: [] }), null);
+  assert.equal(parseClaudeResetCredits(undefined), null);
 });

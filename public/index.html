@@ -251,7 +251,14 @@ function renderClaude(snap) {
     ${sub("7-day Sonnet", d.seven_day_sonnet)}
     ${sub("7-day Opus", d.seven_day_opus)}
     ${sub("7-day Design", d.seven_day_design)}
+    ${renderResetCredits(d.reset_credits)}
   `;
+}
+function renderResetCredits(rc) {
+  return rc && rc.available_count > 0 ? `
+    <div class="sub">↻ ${rc.available_count} full reset${rc.available_count === 1 ? "" : "s"} available${
+      rc.next_expires_at ? ` · next expires ${fmtRel(rc.next_expires_at)} (${fmtTime(rc.next_expires_at)})` : ""}</div>
+  ` : "";
 }
 function renderCodex(snap) {
   const d = snap.data;
@@ -265,11 +272,7 @@ function renderCodex(snap) {
   const fiveHourNotice = !d.five_hour
     ? `<div class="sub">5-hour limit is not currently reported by Codex</div>`
     : "";
-  const rc = d.reset_credits;
-  const resetCredits = rc && rc.available_count > 0 ? `
-    <div class="sub">↻ ${rc.available_count} full reset${rc.available_count === 1 ? "" : "s"} available${
-      rc.next_expires_at ? ` · next expires ${fmtRel(rc.next_expires_at)} (${fmtTime(rc.next_expires_at)})` : ""}</div>
-  ` : "";
+  const resetCredits = renderResetCredits(d.reset_credits);
   return `
     ${windowRow("5-hour", d.five_hour)}
     ${windowRow("7-day", d.seven_day)}

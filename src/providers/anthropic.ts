@@ -23,7 +23,7 @@ const OAUTH_BETA = "oauth-2025-04-20";
 // Limit-reset grants ("cedar_ember") are only reported to a current Claude Code
 // CLI; other user agents get ineligible_reason "surface" / "cli_version".
 // ponytail: pinned version string; bump CLAUDE_CLI_VERSION when grants report cli_version.
-const RESETS_URL = `${USAGE_URL}?cedar_ember=1&skip_spend=1`;
+const RESETS_URL = `${USAGE_URL}?cedar_ember=1`;
 const CLI_USER_AGENT = `claude-cli/${process.env.CLAUDE_CLI_VERSION ?? "2.1.281"} (external, cli)`;
 
 export interface ClaudeWindow {
@@ -209,53 +209,22 @@ async function fetchSubscriptionType(connectionId: string, token: string): Promi
 
 export async function fetchClaudeUsage(account?: string): Promise<ClaudeUsage> {
   const connection = findConnection("claude", account);
-  const res = await fetch(USAGE_URL, {
+  // One request: cedar_ember=1 adds the limit-reset grants to the normal usage body.
+  const res = await fetch(RESETS_URL, {
     headers: {
       Authorization: `Bearer ${connection.accessToken}`,
       "anthropic-beta": OAUTH_BETA,
+      "User-Agent": CLI_USER_AGENT,
       Accept: "application/json",
     },
   });
   if (!res.ok) {
     throw new Error(`anthropic oauth/usage HTTP ${res.status} ${await res.text().catch(() => "")}`);
   }
-  const json = (await res.json()) as RawUsageResponse;
+  const json = (await res.json()) as RawUsageResponse & { cedar_ember?: RawResetGrants };
   return parseClaudeUsage(
     json,
     await fetchSubscriptionType(connection.id, connection.accessToken),
-    await fetchResetCredits(connection.id, connection.accessToken),
+    parseClaudeResetCredits(json.cedar_ember),
   );
-}
-
-// Grants change rarely and this bucket 429s quickly, so poll it sparingly and
-// keep the last good answer across failures.
-const RESETS_TTL_MS = 15 * 60_000;
-const RESETS_RETRY_MS = 2 * 60_000;
-const resetsCache = new Map<string, { at: number; value: ClaudeResetCredits | null }>();
-
-function keepLastResets(connectionId: string, cached: { value: ClaudeResetCredits | null } | undefined) {
-  // Retry after RESETS_RETRY_MS instead of on the next poll.
-  resetsCache.set(connectionId, { at: Date.now() - RESETS_TTL_MS + RESETS_RETRY_MS, value: cached?.value ?? null });
-  return cached?.value ?? null;
-}
-
-async function fetchResetCredits(connectionId: string, token: string): Promise<ClaudeResetCredits | null> {
-  const cached = resetsCache.get(connectionId);
-  if (cached && Date.now() - cached.at < RESETS_TTL_MS) return cached.value;
-  try {
-    const res = await fetch(RESETS_URL, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "anthropic-beta": OAUTH_BETA,
-        "User-Agent": CLI_USER_AGENT,
-        Accept: "application/json",
-      },
-    });
-    if (!res.ok) return keepLastResets(connectionId, cached);
-    const value = parseClaudeResetCredits(((await res.json()) as { cedar_ember?: RawResetGrants }).cedar_ember);
-    resetsCache.set(connectionId, { at: Date.now(), value });
-    return value;
-  } catch {
-    return keepLastResets(connectionId, cached);
-  }
 }

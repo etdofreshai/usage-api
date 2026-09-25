@@ -159,12 +159,12 @@ const CURATED_HISTORY_SERIES = [
   { key: "codex2:GPT-5.3-Codex-Spark seven_day", label: "Codex #2 Spark 7-day", color: "#c4b5fd", default: false },
   { key: "zai:five_hour", label: "ZAI 5-hour", color: "#a855f7", default: true },
   { key: "zai:monthly", label: "ZAI monthly", color: "#d8b4fe", default: false },
-  { key: "claude2:five_hour", label: "Claude #2 Code 5-hour", color: "#f59e0b", default: false },
-  { key: "claude2:seven_day", label: "Claude #2 Code 7-day", color: "#fbbf24", default: false },
+  { key: "claude2:five_hour", label: "Claude #2 Code 5-hour", color: "#f59e0b", default: true },
+  { key: "claude2:seven_day", label: "Claude #2 Code 7-day", color: "#fbbf24", default: true },
   { key: "claude2:seven_day_sonnet", label: "Claude #2 Sonnet 7-day", color: "#fcd34d", default: false },
   { key: "claude2:seven_day_opus", label: "Claude #2 Opus 7-day", color: "#d97706", default: false },
   { key: "claude2:seven_day_design", label: "Claude #2 Design 7-day", color: "#fde68a", default: false },
-  { key: "claude2:seven_day_fable", label: "Claude #2 Fable 7-day", color: "#b45309", default: false },
+  { key: "claude2:seven_day_fable", label: "Claude #2 Fable 7-day", color: "#b45309", default: true },
 ];
 let historyGranularity = loadHistoryGranularity();
 let selectedSeriesKeys = loadSelectedSeriesKeys();
@@ -539,7 +539,15 @@ function loadSelectedSeriesKeys() {
     const raw = localStorage.getItem("usage-api:selected-history-series");
     if (raw) {
       const parsed = JSON.parse(raw).filter(key => allSeriesKeys().includes(key));
-      if (parsed.length > 0) return new Set(parsed);
+      if (parsed.length > 0) {
+        // Defaults added since this browser last saved get switched on once.
+        const known = JSON.parse(localStorage.getItem("usage-api:known-default-series") ?? "null")
+          ?? defaultSeriesKeys().filter(key => !key.startsWith("claude2:"));
+        for (const key of defaultSeriesKeys()) if (!known.includes(key)) parsed.push(key);
+        localStorage.setItem("usage-api:known-default-series", JSON.stringify(defaultSeriesKeys()));
+        localStorage.setItem("usage-api:selected-history-series", JSON.stringify(parsed));
+        return new Set(parsed);
+      }
     }
   } catch {}
   return new Set(defaultSeriesKeys());

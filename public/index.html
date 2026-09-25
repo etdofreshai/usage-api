@@ -289,6 +289,9 @@ function renderZai(snap) {
   if (d.monthly) out += metricRow("monthly", d.monthly.used_percent, d.monthly.expected_percent, d.monthly.resets_at);
   return out || `<div class="empty">no metrics</div>`;
 }
+// Math.min/max(...arr) overflows the call stack on large history arrays.
+function arrMin(a) { let m = Infinity; for (const v of a) if (v < m) m = v; return m; }
+function arrMax(a) { let m = -Infinity; for (const v of a) if (v > m) m = v; return m; }
 function fmtUsd(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "—";
@@ -435,7 +438,7 @@ function visibleHistoryPoints(points) {
   if (!points?.length) return [];
   const validTimes = points.map(p => new Date(p.t).getTime()).filter(Number.isFinite);
   if (!validTimes.length) return [];
-  const latest = Math.max(...validTimes);
+  const latest = arrMax(validTimes);
   const duration = rangeDurationMs(historyRange);
   const end = historyWindowEndMs ?? latest;
   const start = end - duration;
@@ -460,8 +463,8 @@ function shiftHistoryWindow(direction) {
   if (!latestHistory) return;
   const allTimes = (latestHistory.series ?? []).flatMap(s => s.points ?? []).map(p => new Date(p.t).getTime()).filter(Number.isFinite);
   if (!allTimes.length) return;
-  const minAvailable = Math.min(...allTimes);
-  const maxAvailable = Math.max(...allTimes);
+  const minAvailable = arrMin(allTimes);
+  const maxAvailable = arrMax(allTimes);
   const duration = rangeDurationMs(historyRange);
   const currentEnd = historyWindowEndMs ?? maxAvailable;
   const nextEnd = currentEnd + direction * duration;
@@ -471,8 +474,8 @@ function shiftHistoryWindow(direction) {
 
 function updateHistoryWindowButtons(times) {
   if (!times.length) return;
-  const minAvailable = Math.min(...times);
-  const maxAvailable = Math.max(...times);
+  const minAvailable = arrMin(times);
+  const maxAvailable = arrMax(times);
   const duration = rangeDurationMs(historyRange);
   const end = historyWindowEndMs ?? maxAvailable;
   historyPrevWindow.disabled = end - duration <= minAvailable;
@@ -639,7 +642,7 @@ function renderHistory(history) {
   const allPoints = selected.flatMap(item => item.series.points);
   const width = 900, height = 260, padLeft = 44, padRight = 18, padTop = 30, padBottom = 34;
   const times = allPoints.map(p => new Date(p.t).getTime()).filter(Number.isFinite);
-  const rawMinT = Math.min(...times), rawMaxT = Math.max(...times);
+  const rawMinT = arrMin(times), rawMaxT = arrMax(times);
   const spanPad = Math.max(60 * 60 * 1000, (rawMaxT - rawMinT || 0) * 0.08);
   const minT = rawMinT === rawMaxT ? rawMinT - spanPad : rawMinT - spanPad;
   const maxT = rawMinT === rawMaxT ? rawMaxT + spanPad : rawMaxT + spanPad;

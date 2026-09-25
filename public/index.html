@@ -273,11 +273,15 @@ function renderCodex(snap) {
     ? `<div class="sub">5-hour limit is not currently reported by Codex</div>`
     : "";
   const resetCredits = renderResetCredits(d.reset_credits);
+  const bal = d.credits_balance;
+  const creditsLine = bal == null ? "" : `<div class="sub">credits: ${
+    bal === "unlimited" ? "unlimited" : escapeHtml(Number.isFinite(Number(bal)) ? String(Number(bal)) : bal)}</div>`;
   return `
     ${windowRow("5-hour", d.five_hour)}
     ${windowRow("7-day", d.seven_day)}
     ${fiveHourNotice}
     ${extras}
+    ${creditsLine}
     ${resetCredits}
   `;
 }

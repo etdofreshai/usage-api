@@ -21,7 +21,9 @@ GET /api/usage
 Returns per-provider:
 
 - `data` — provider-specific shape (utilization %, reset times, credits, etc.).
-  A failed poll keeps the last good value here instead of clearing it.
+  A failed poll keeps the last good value here instead of clearing it; it is
+  also saved to `usage-last.json` beside the history file (`USAGE_LAST_FILE`)
+  so it survives restarts.
 - `fetchedAt` — ISO date-time of the fetch that produced `data`
 - `lastAttemptAt` — ISO date-time of the latest poll, success or failure
 - `ageSec` — seconds since `fetchedAt`

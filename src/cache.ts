@@ -69,6 +69,11 @@ export class Poller<T> {
     this.scheduleNext(0);
   }
 
+  /** Restore a value from a previous run so a failed first poll still serves it. */
+  seed(data: T, fetchedAt: string) {
+    if (this.data == null) { this.data = data; this.fetchedAt = fetchedAt; }
+  }
+
   stop() {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;

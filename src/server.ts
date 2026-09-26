@@ -47,8 +47,30 @@ const HISTORY_FILE = process.env.USAGE_HISTORY_FILE ?? "/home/node/workspace/usa
 const history = new HistoryStore({ retentionMs: HISTORY_RETENTION_MS, filePath: HISTORY_FILE });
 await history.load();
 
+// Last good raw value per provider, so a restart followed by a 429 still
+// serves the previous numbers (with their real fetchedAt) instead of null.
+const LAST_FILE = process.env.USAGE_LAST_FILE ?? path.join(path.dirname(HISTORY_FILE), "usage-last.json");
+let lastGood: Record<string, { data: unknown; fetchedAt: string }> = {};
+try {
+  lastGood = JSON.parse(await fs.readFile(LAST_FILE, "utf8"));
+} catch (err: any) {
+  if (err?.code !== "ENOENT") console.warn(`could not read ${LAST_FILE}: ${err?.message ?? err}`);
+}
+let lastWrite: Promise<void> = Promise.resolve();
+function saveLast(provider: string, data: unknown, fetchedAt: Date) {
+  lastGood[provider] = { data, fetchedAt: fetchedAt.toISOString() };
+  const body = JSON.stringify(lastGood);
+  lastWrite = lastWrite
+    .then(async () => {
+      await fs.writeFile(`${LAST_FILE}.tmp`, body, "utf8");
+      await fs.rename(`${LAST_FILE}.tmp`, LAST_FILE);
+    })
+    .catch((err) => console.warn(`could not write ${LAST_FILE}: ${err?.message ?? err}`));
+}
+
 function remember<T>(provider: string): (data: T, fetchedAt: Date) => void {
   return (data: T, fetchedAt: Date) => {
+    saveLast(provider, data, fetchedAt);
     const enriched = enrichProviderData(provider, data);
     if ((provider !== "codex" && provider !== "codex2") || !enriched || typeof enriched !== "object") {
       history.recordProvider(provider, enriched, fetchedAt);
@@ -124,6 +146,10 @@ const jev = OPENROUTER_MANAGEMENT_KEY
   ? new Poller("jev", () => fetchJevUsage(OPENROUTER_MANAGEMENT_KEY))
   : null;
 
+for (const p of [claude, claude2, codex, codex2, zai, openrouter, openai, jev]) {
+  const last = p ? lastGood[p.name] : undefined;
+  if (p && last) (p as Poller<any>).seed(last.data, last.fetchedAt);
+}
 claude.start();
 claude2?.start();
 codex.start();

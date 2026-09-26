@@ -58,6 +58,9 @@ export interface ClaudeUsage {
   subscription_type: string | null;
   // null when the grants call failed or the account is ineligible.
   reset_credits: ClaudeResetCredits | null;
+  // 9router providerConnections.id, so consumers (9gate claude-wake) can match
+  // an account without calling Anthropic themselves.
+  connection_id?: string;
 }
 
 // Newer responses carry per-model usage in a `limits` array instead of the
@@ -224,9 +227,12 @@ export async function fetchClaudeUsage(account?: string): Promise<ClaudeUsage> {
     throw new Error(`anthropic oauth/usage HTTP ${res.status} ${await res.text().catch(() => "")}`);
   }
   const json = (await res.json()) as RawUsageResponse & { cedar_ember?: RawResetGrants };
-  return parseClaudeUsage(
-    json,
-    await fetchSubscriptionType(connection.id, connection.accessToken),
-    parseClaudeResetCredits(json.cedar_ember),
-  );
+  return {
+    ...parseClaudeUsage(
+      json,
+      await fetchSubscriptionType(connection.id, connection.accessToken),
+      parseClaudeResetCredits(json.cedar_ember),
+    ),
+    connection_id: connection.id,
+  };
 }

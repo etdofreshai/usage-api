@@ -4,7 +4,7 @@
  * Endpoint: GET https://api.z.ai/api/monitor/usage/quota/limit
  *   → data.limits[] with type ∈ { TOKENS_LIMIT (5h tokens), TIME_LIMIT (monthly prompts) }
  */
-import { RateLimitError, parseRetryAfter } from "../cache.js";
+import { throwIfRateLimited } from "../cache.js";
 
 const URL = "https://api.z.ai/api/monitor/usage/quota/limit";
 
@@ -44,9 +44,7 @@ export async function fetchZaiUsage(apiKey: string): Promise<ZaiUsage> {
   const res = await fetch(URL, {
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
   });
-  if (res.status === 429) {
-    throw new RateLimitError(parseRetryAfter(res.headers.get("retry-after")) || 60);
-  }
+  throwIfRateLimited(res);
   if (!res.ok) {
     throw new Error(`zai usage HTTP ${res.status} ${await res.text().catch(() => "")}`);
   }

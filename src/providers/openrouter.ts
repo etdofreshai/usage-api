@@ -4,7 +4,7 @@
  * Endpoint: GET https://openrouter.ai/api/v1/key
  *   → { data: { label, usage, limit, limit_remaining, is_free_tier, ... } }
  */
-import { RateLimitError, parseRetryAfter } from "../cache.js";
+import { throwIfRateLimited } from "../cache.js";
 
 const URL = "https://openrouter.ai/api/v1/key";
 
@@ -20,9 +20,7 @@ export async function fetchOpenRouterUsage(apiKey: string): Promise<OpenRouterUs
   const res = await fetch(URL, {
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
   });
-  if (res.status === 429) {
-    throw new RateLimitError(parseRetryAfter(res.headers.get("retry-after")) || 60);
-  }
+  throwIfRateLimited(res);
   if (!res.ok) {
     throw new Error(`openrouter HTTP ${res.status} ${await res.text().catch(() => "")}`);
   }

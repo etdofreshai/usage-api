@@ -16,6 +16,7 @@
  * and refreshes the token, and this module only reads it.
  */
 import { findConnection } from "./ninerouter.js";
+import { throwIfRateLimited } from "../cache.js";
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
@@ -218,6 +219,7 @@ export async function fetchClaudeUsage(account?: string): Promise<ClaudeUsage> {
       Accept: "application/json",
     },
   });
+  throwIfRateLimited(res);
   if (!res.ok) {
     throw new Error(`anthropic oauth/usage HTTP ${res.status} ${await res.text().catch(() => "")}`);
   }

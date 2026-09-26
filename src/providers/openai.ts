@@ -4,7 +4,7 @@
  *
  * Endpoint: GET https://api.openai.com/v1/organization/costs?start_time=...
  */
-import { RateLimitError, parseRetryAfter } from "../cache.js";
+import { throwIfRateLimited } from "../cache.js";
 
 export interface OpenAiUsage {
   spend_today: number;
@@ -17,9 +17,7 @@ async function fetchSpend(apiKey: string, startUnix: number): Promise<number> {
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
   });
-  if (res.status === 429) {
-    throw new RateLimitError(parseRetryAfter(res.headers.get("retry-after")) || 60);
-  }
+  throwIfRateLimited(res);
   if (!res.ok) {
     throw new Error(`openai costs HTTP ${res.status} ${await res.text().catch(() => "")}`);
   }

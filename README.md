@@ -20,9 +20,15 @@ GET /api/usage
 
 Returns per-provider:
 
-- `data` — provider-specific shape (utilization %, reset times, credits, etc.)
-- `fetchedAt` — when this snapshot was last refreshed
-- `error` — null on success
+- `data` — provider-specific shape (utilization %, reset times, credits, etc.).
+  A failed poll keeps the last good value here instead of clearing it.
+- `fetchedAt` — ISO date-time of the fetch that produced `data`
+- `lastAttemptAt` — ISO date-time of the latest poll, success or failure
+- `ageSec` — seconds since `fetchedAt`
+- `staleness` — `fresh` (< 5 min), `little_stale` (< 1 h), or `stale`; tune
+  with `STALE_LITTLE_SECONDS` / `STALE_SECONDS`. Clients should use this
+  rather than their own age rules.
+- `error` — null when the latest poll succeeded
 - `intervalSec` — current polling interval (self-tunes)
 - `nextFetchAt` — when the next refresh fires
 
@@ -37,8 +43,13 @@ Each provider runs an independent `Poller`:
 
 - starts at `POLL_TARGET_SECONDS` (default 2.5 min)
 - after 3 consecutive successes, walks toward `POLL_FLOOR_SECONDS` (1 min)
-- on 429: honors `Retry-After` (or doubles)
+- on 429 with `Retry-After`: retries exactly then (+1 s), even past the
+  ceiling, then resumes the normal interval; without it, doubles
 - on other errors: doubles, capped at `POLL_CEILING_SECONDS` (10 min)
+
+usage-api is the only service that polls provider usage endpoints. 9gate,
+codex-remote, and Usage Monitor read `/api/usage`, so they share one set of
+rate limits.
 
 ## Auth
 

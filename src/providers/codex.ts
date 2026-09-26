@@ -16,7 +16,7 @@
  * usage-api owns no Codex credential: 9router holds the OAuth account and
  * refreshes the token, and this module only reads it.
  */
-import { RateLimitError } from "../cache.js";
+import { throwIfRateLimited } from "../cache.js";
 import { findConnection, RouterConnection } from "./ninerouter.js";
 
 const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
@@ -150,12 +150,6 @@ export function parseResetCredits(json: RawResetCreditsResponse): CodexResetCred
   };
 }
 
-function parseRetryAfter(value: string | null): number {
-  if (!value) return 0;
-  const seconds = Number(value);
-  return Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
-}
-
 function authHeaders(token: string): Record<string, string> {
   return {
     Authorization: `Bearer ${token}`,
@@ -193,9 +187,7 @@ export function createCodexUsageFetcher(
   return async function fetchCodexUsage(account?: string): Promise<CodexUsage> {
     const connection = resolve(account);
     const res = await fetchImpl(USAGE_URL, { headers: authHeaders(connection.accessToken) });
-    if (res.status === 429) {
-      throw new RateLimitError(parseRetryAfter(res.headers.get("retry-after")) || 60);
-    }
+    throwIfRateLimited(res);
     if (!res.ok) {
       throw new Error(`codex usage HTTP ${res.status} ${await res.text().catch(() => "")}`);
     }

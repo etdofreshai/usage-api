@@ -28,6 +28,8 @@ export interface RouterConnection {
   email: string | null;
   accessToken: string;
   expiresAt: string | null;
+  /** ChatGPT workspace/account id (Codex); wham/usage needs it to report the right account. */
+  accountId?: string | null;
 }
 
 interface ConnectionRow {
@@ -57,7 +59,11 @@ function readConnections(): RouterConnection[] {
       .all() as unknown as ConnectionRow[];
     const connections: RouterConnection[] = [];
     for (const row of rows) {
-      let parsed: { accessToken?: string; expiresAt?: string };
+      let parsed: {
+        accessToken?: string;
+        expiresAt?: string;
+        providerSpecificData?: { workspaceId?: string; accountId?: string; chatgptAccountId?: string };
+      };
       try {
         parsed = JSON.parse(row.data ?? "{}");
       } catch {
@@ -73,6 +79,10 @@ function readConnections(): RouterConnection[] {
         email: row.email ?? null,
         accessToken: parsed.accessToken,
         expiresAt: parsed.expiresAt ?? null,
+        accountId: parsed.providerSpecificData?.workspaceId
+          ?? parsed.providerSpecificData?.accountId
+          ?? parsed.providerSpecificData?.chatgptAccountId
+          ?? null,
       });
     }
     return connections;

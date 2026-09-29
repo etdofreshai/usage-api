@@ -150,11 +150,14 @@ export function parseResetCredits(json: RawResetCreditsResponse): CodexResetCred
   };
 }
 
-function authHeaders(token: string): Record<string, string> {
+// Without ChatGPT-Account-ID, wham/usage answers for an empty account context
+// (account_id "") that can read 100% used while the real workspace has quota.
+function authHeaders(token: string, accountId?: string | null): Record<string, string> {
   return {
     Authorization: `Bearer ${token}`,
     "User-Agent": "codex-cli",
     Accept: "application/json",
+    ...(accountId ? { "ChatGPT-Account-ID": accountId } : {}),
   };
 }
 
@@ -171,12 +174,12 @@ export function createCodexUsageFetcher(
 
   // The usage response already reports how many resets are available, so the
   // detail call is only worth making when there is at least one to describe.
-  async function fetchResetCredits(token: string, availableCount: number): Promise<CodexResetCredits | null> {
+  async function fetchResetCredits(headers: Record<string, string>, availableCount: number): Promise<CodexResetCredits | null> {
     if (availableCount <= 0) {
       return { available_count: availableCount, next_expires_at: null, credits: [] };
     }
     try {
-      const res = await fetchImpl(RESET_CREDITS_URL, { headers: authHeaders(token) });
+      const res = await fetchImpl(RESET_CREDITS_URL, { headers });
       if (!res.ok) return null;
       return parseResetCredits((await res.json()) as RawResetCreditsResponse);
     } catch {
@@ -186,7 +189,8 @@ export function createCodexUsageFetcher(
 
   return async function fetchCodexUsage(account?: string): Promise<CodexUsage> {
     const connection = resolve(account);
-    const res = await fetchImpl(USAGE_URL, { headers: authHeaders(connection.accessToken) });
+    const headers = authHeaders(connection.accessToken, connection.accountId);
+    const res = await fetchImpl(USAGE_URL, { headers });
     throwIfRateLimited(res);
     if (!res.ok) {
       throw new Error(`codex usage HTTP ${res.status} ${await res.text().catch(() => "")}`);
@@ -195,7 +199,7 @@ export function createCodexUsageFetcher(
     return {
       ...parseCodexUsage(json),
       reset_credits: await fetchResetCredits(
-        connection.accessToken,
+        headers,
         json.rate_limit_reset_credits?.available_count ?? 0,
       ),
     };

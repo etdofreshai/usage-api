@@ -34,6 +34,21 @@ function headersOf(init?: RequestInit): Headers {
   return new Headers(init?.headers);
 }
 
+// Without the account header OpenAI reports an empty account context, which
+// showed 100% used on the seven-day window while the Pro workspace was at 60%.
+test("Codex usage names the ChatGPT account from 9router", async () => {
+  let sent: string | null = null;
+  const fetcher = createCodexUsageFetcher({
+    resolveConnection: () => ({ ...connection("token"), accountId: "acct-123" }),
+    fetchImpl: (async (_input, init) => {
+      sent = headersOf(init).get("ChatGPT-Account-ID");
+      return usageResponse();
+    }) as typeof fetch,
+  });
+  await fetcher();
+  assert.equal(sent, "acct-123");
+});
+
 // 9router owns the OAuth account and refreshes the token; usage-api must send
 // whatever token the connection store currently holds, without caching one of
 // its own across calls.

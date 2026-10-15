@@ -41,6 +41,15 @@ Codex usage exposes semantic `five_hour` and `seven_day` windows. Either may be
 
 ## Adaptive polling
 
+Active Claude and Codex connections are discovered in 9router every 30 seconds.
+Existing primary/secondary environment mappings retain `claude`, `claude2`,
+`codex`, and `codex2`; further accounts receive `claude3`, `codex3`, etc.
+Numbers are persisted in `usage-accounts.json` beside the history file, so
+account order changes do not mix usage history. Removed/disabled connections
+stop polling and disappear. Each snapshot includes `account.id`, `account.name`,
+and `account.family`; clients can use the ID to persist visibility preferences.
+The website supports all account cards and history series automatically.
+
 Each provider runs an independent `Poller`:
 
 - starts at `POLL_TARGET_SECONDS` (default 2.5 min)

@@ -218,10 +218,23 @@ test("Codex card omits unavailable 5-hour metrics and explains the reporting gap
 test("optional second Codex account remains separate and clearly labeled", () => {
   assert.match(html, /codex2: renderCodex/);
   assert.match(html, /codex2: "codex #2"/);
-  assert.match(html, /name === "codex" && hasCodex2 \? "codex #1"/);
+  assert.match(html, /name\.slice\(family\.length\) \|\| "1"/);
   assert.match(html, /hasCodex2 = !!j\.providers\.codex2\?\.data/);
-  assert.match(html, /if \(j\.providers\.codex2\?\.data\) order\.push\("codex2"\)/);
+  assert.match(html, /Object\.keys\(j\.providers\)/);
   assert.match(html, /codex2Visible\(\) \|\| !option\.key\.startsWith\("codex2:"\)/);
+});
+
+test("new accounts acquire independent history series without duplicating existing ones", () => {
+  const fn = html.match(/function discoverAccountSeries\(keys\) \{[\s\S]*?\n\}/)[0];
+  const sandbox = { CURATED_HISTORY_SERIES: [
+    { key: "codex:seven_day", label: "Codex 7-day", default: true },
+    { key: "claude:seven_day_fable", label: "Claude Fable 7-day", default: true },
+  ], selectedSeriesKeys: new Set() };
+  vm.createContext(sandbox);
+  vm.runInContext(fn + '; discoverAccountSeries(["codex3", "claude12", "codex3", "openai"]); discoverAccountSeries(["codex3"]);', sandbox);
+  assert.equal(sandbox.CURATED_HISTORY_SERIES.length, 4);
+  assert.equal(sandbox.CURATED_HISTORY_SERIES[2].label, "Codex #3 7-day");
+  assert.ok(sandbox.selectedSeriesKeys.has("claude12:seven_day_fable"));
 });
 
 test("dashboard cards link to provider usage pages", () => {

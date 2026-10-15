@@ -19,7 +19,7 @@ test("Codex history omits deprecated aliases to avoid duplicate series", () => {
 test("optional second Codex account uses an isolated poller and provider key", () => {
   // The second account is named by whichever identifier 9router records for
   // it, and only starts when 9router actually has that connection.
-  assert.match(server, /const codex2Enabled = !CODEX2_OFF && hasConnection\("codex", CODEX2_ACCOUNT\)/);
-  assert.match(server, /new Poller\("codex2", \(\) => fetchCodexUsage\(CODEX2_ACCOUNT\), remember\("codex2"\)\)/);
-  assert.match(server, /if \(codex2\) providers\.codex2 = enrichCodex\(codex2\.snapshot\(\)\)/);
+  assert.match(server, /key === "codex2" && CODEX2_OFF/);
+  assert.match(server, /new Poller<unknown>\(key/);
+  assert.match(server, /providers\[key\] =/);
 });

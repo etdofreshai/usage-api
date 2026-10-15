@@ -110,7 +110,7 @@ export function findConnection(provider: string, identifier: string | undefined)
     throw new Error(`9router has no authenticated "${provider}" connection`);
   }
   if (identifier) {
-    const match = matches.find((c) => c.email === identifier || c.name === identifier);
+    const match = matches.find((c) => c.id === identifier || c.email === identifier || c.name === identifier);
     if (!match) {
       const known = matches.map((c) => c.email ?? c.name).join(", ");
       throw new Error(`9router has no "${provider}" connection for ${identifier} (found: ${known || "none"})`);

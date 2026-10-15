@@ -49,6 +49,7 @@ export interface CacheEntry<T> {
 }
 
 export class Poller<T> {
+  private stopped = false;
   private timer: NodeJS.Timeout | null = null;
   private intervalSec: number = TARGET;
   private successStreak = 0;
@@ -66,6 +67,7 @@ export class Poller<T> {
   ) {}
 
   start() {
+    this.stopped = false;
     this.scheduleNext(0);
   }
 
@@ -75,6 +77,7 @@ export class Poller<T> {
   }
 
   stop() {
+    this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
   }
@@ -94,6 +97,7 @@ export class Poller<T> {
   }
 
   private scheduleNext(delayMs: number) {
+    if (this.stopped) return;
     if (this.timer) clearTimeout(this.timer);
     this.nextFetchAt = new Date(Date.now() + delayMs);
     this.timer = setTimeout(() => void this.tick(), delayMs);

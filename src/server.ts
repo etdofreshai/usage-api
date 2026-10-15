@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import { Poller } from "./cache.js";
 import { HistoryGranularity, HistoryStore } from "./history.js";
+import { assignAccounts } from "./accounts.js";
 
 // Load env from the shared volume (same .env that ai-sessions uses) so secrets
 // live alongside the OAuth credentials instead of in Dokploy. Run before any
@@ -29,7 +30,7 @@ try {
 }
 import { fetchClaudeUsage } from "./providers/anthropic.js";
 import { fetchCodexUsage } from "./providers/codex.js";
-import { hasConnection, listConnections } from "./providers/ninerouter.js";
+import { listConnections } from "./providers/ninerouter.js";
 import { fetchZaiUsage } from "./providers/zai.js";
 import { fetchOpenRouterUsage } from "./providers/openrouter.js";
 import { fetchOpenAiUsage } from "./providers/openai.js";
@@ -72,7 +73,7 @@ function remember<T>(provider: string): (data: T, fetchedAt: Date) => void {
   return (data: T, fetchedAt: Date) => {
     saveLast(provider, data, fetchedAt);
     const enriched = enrichProviderData(provider, data);
-    if ((provider !== "codex" && provider !== "codex2") || !enriched || typeof enriched !== "object") {
+    if (!/^codex\d*$/.test(provider) || !enriched || typeof enriched !== "object") {
       history.recordProvider(provider, enriched, fetchedAt);
       return;
     }
@@ -107,11 +108,8 @@ const CLAUDE2_ACCOUNT = process.env.NINEROUTER_CLAUDE2_ACCOUNT?.trim() || undefi
 const CODEX_ACCOUNT = process.env.NINEROUTER_CODEX_ACCOUNT?.trim() || "etdofresh@gmail.com";
 const CODEX2_ACCOUNT = process.env.NINEROUTER_CODEX2_ACCOUNT?.trim() || "etdofresh+dev@gmail.com";
 
-// CLAUDE2_ENABLED / CODEX2_ENABLED remain hard kill switches. Otherwise a
-// second account is only started when 9router actually has a matching
-// "claude"/"codex" connection at startup, so an unconfigured second account
-// stays silently absent from /api/usage instead of a poller erroring on
-// every tick.
+// Legacy second-account kill switches remain supported. Other active
+// connections are discovered automatically and assigned persistent numbers.
 const CLAUDE2_OFF = /^(0|false|no|off)$/i.test((process.env.CLAUDE2_ENABLED ?? "").trim());
 const CODEX2_OFF = /^(0|false|no|off)$/i.test((process.env.CODEX2_ENABLED ?? "").trim());
 
@@ -122,23 +120,41 @@ try {
   console.warn(`could not read 9router's connection store at startup: ${err?.message ?? err}`);
 }
 
-const claude2Enabled = !CLAUDE2_OFF && !!CLAUDE2_ACCOUNT && hasConnection("claude", CLAUDE2_ACCOUNT);
-const codex2Enabled = !CODEX2_OFF && hasConnection("codex", CODEX2_ACCOUNT);
-console.log(CLAUDE2_OFF
-  ? "claude2 disabled (CLAUDE2_ENABLED=false)"
-  : claude2Enabled
-    ? `claude2 enabled (9router account: ${CLAUDE2_ACCOUNT})`
-    : `claude2 disabled (NINEROUTER_CLAUDE2_ACCOUNT unset or no matching 9router connection)`);
-console.log(CODEX2_OFF
-  ? "codex2 disabled (CODEX2_ENABLED=false)"
-  : codex2Enabled
-    ? `codex2 enabled (9router account: ${CODEX2_ACCOUNT})`
-    : `codex2 disabled (no 9router codex connection for ${CODEX2_ACCOUNT})`);
-
-const claude = new Poller("claude", () => fetchClaudeUsage(CLAUDE_ACCOUNT), remember("claude"));
-const claude2 = claude2Enabled ? new Poller("claude2", () => fetchClaudeUsage(CLAUDE2_ACCOUNT), remember("claude2")) : null;
-const codex = new Poller("codex", () => fetchCodexUsage(CODEX_ACCOUNT), remember("codex"));
-const codex2 = codex2Enabled ? new Poller("codex2", () => fetchCodexUsage(CODEX2_ACCOUNT), remember("codex2")) : null;
+const ACCOUNTS_FILE = path.join(path.dirname(HISTORY_FILE), "usage-accounts.json");
+let assignments: Record<string, string> = {};
+try { assignments = JSON.parse(await fs.readFile(ACCOUNTS_FILE, "utf8")); }
+catch (err: any) { if (err?.code !== "ENOENT") throw err; }
+const accountPollers = new Map<string, { connectionId: string; name: string; family: string; poller: Poller<unknown> }>();
+async function syncAccounts() {
+  const connections = listConnections();
+  const next = assignAccounts(connections, assignments, {
+    claude: CLAUDE_ACCOUNT, claude2: CLAUDE2_ACCOUNT, codex: CODEX_ACCOUNT, codex2: CODEX2_ACCOUNT,
+  });
+  if (JSON.stringify(next) !== JSON.stringify(assignments)) {
+    await fs.writeFile(ACCOUNTS_FILE, JSON.stringify(next), "utf8");
+    assignments = next;
+  }
+  const active = new Set<string>();
+  for (const [key, id] of Object.entries(assignments)) {
+    const connection = connections.find(c => c.id === id);
+    if (!connection || (key === "claude2" && CLAUDE2_OFF) || (key === "codex2" && CODEX2_OFF)) continue;
+    active.add(key);
+    const existing = accountPollers.get(key);
+    if (existing) { existing.name = connection.email ?? connection.name; continue; }
+    const family = connection.provider;
+    const poller = new Poller<unknown>(key,
+      () => family === "claude" ? fetchClaudeUsage(id) : fetchCodexUsage(id), remember(key));
+    const last = lastGood[key];
+    if (last) poller.seed(last.data, last.fetchedAt);
+    accountPollers.set(key, { connectionId: id, name: connection.email ?? connection.name, family, poller });
+    poller.start();
+  }
+  for (const [key, account] of accountPollers) {
+    if (!active.has(key)) { account.poller.stop(); accountPollers.delete(key); }
+  }
+}
+await syncAccounts();
+setInterval(() => { void syncAccounts().catch(err => console.warn("account discovery failed:", err.message)); }, 30_000);
 const zai = ZAI_KEY ? new Poller("zai", () => fetchZaiUsage(ZAI_KEY), remember("zai")) : null;
 const openrouter = OPENROUTER_KEY ? new Poller("openrouter", () => fetchOpenRouterUsage(OPENROUTER_KEY), remember("openrouter")) : null;
 const openai = OPENAI_KEY ? new Poller("openai", () => fetchOpenAiUsage(OPENAI_KEY), remember("openai")) : null;
@@ -146,14 +162,10 @@ const jev = OPENROUTER_MANAGEMENT_KEY
   ? new Poller("jev", () => fetchJevUsage(OPENROUTER_MANAGEMENT_KEY))
   : null;
 
-for (const p of [claude, claude2, codex, codex2, zai, openrouter, openai, jev]) {
+for (const p of [zai, openrouter, openai, jev]) {
   const last = p ? lastGood[p.name] : undefined;
   if (p && last) (p as Poller<any>).seed(last.data, last.fetchedAt);
 }
-claude.start();
-claude2?.start();
-codex.start();
-codex2?.start();
 zai?.start();
 openrouter?.start();
 openai?.start();
@@ -251,17 +263,21 @@ function enrichZai(snap: { data?: any }) {
 }
 
 function enrichProviderData(provider: string, data: unknown): unknown {
-  if (provider === "claude" || provider === "claude2") return enrichClaude({ data }).data;
-  if (provider === "codex" || provider === "codex2") return enrichCodex({ data }).data;
+  if (/^claude\d*$/.test(provider)) return enrichClaude({ data }).data;
+  if (/^codex\d*$/.test(provider)) return enrichCodex({ data }).data;
   if (provider === "zai") return enrichZai({ data }).data;
   return data;
 }
 
 app.get("/api/usage", (_req, res) => {
-  const providers: Record<string, unknown> = { claude: enrichClaude(claude.snapshot()) };
-  if (claude2) providers.claude2 = enrichClaude(claude2.snapshot());
-  providers.codex = enrichCodex(codex.snapshot());
-  if (codex2) providers.codex2 = enrichCodex(codex2.snapshot());
+  const providers: Record<string, unknown> = {};
+  for (const [key, account] of accountPollers) {
+    const snapshot = account.poller.snapshot();
+    providers[key] = {
+      ...snapshot, data: enrichProviderData(key, snapshot.data),
+      account: { id: account.connectionId, name: account.name, family: account.family },
+    };
+  }
   providers.zai = zai ? enrichZai(zai.snapshot()) : { data: null, error: "ZAI_API_KEY not set" };
   providers.openrouter = openrouter?.snapshot() ?? { data: null, error: "OPENROUTER_API_KEY not set" };
   providers.openai = openai?.snapshot() ?? { data: null, error: "OPENAI_ADMIN_KEY not set" };

@@ -346,21 +346,23 @@ function statusDot(snap) {
 }
 
 function card(name, snap) {
-  const renderer = RENDERERS[name] || renderRaw;
+  const family = /^(codex|claude)\d*$/.exec(name)?.[1];
+  const renderer = RENDERERS[family ?? name] || renderRaw;
   const stamp = snap?.fetchedAt
     ? `fetched ${fmtRel(snap.fetchedAt)}${snap.intervalSec ? ` · every ${snap.intervalSec}s` : ""}`
     : "no fetch yet";
   const body = snap?.error
     ? `<div class="err">${escapeHtml(String(snap.error))}</div>${snap.data ? renderer(snap) : ""}`
     : renderer(snap || {});
-  const link = PROVIDER_LINKS[name];
-  const title = name === "codex" && hasCodex2 ? "codex #1" : (PROVIDER_TITLES[name] ?? name);
+  const link = PROVIDER_LINKS[family ?? name];
+  const number = family ? (name.slice(family.length) || "1") : "";
+  const title = family ? `${family} #${number}` : (PROVIDER_TITLES[name] ?? name);
   const titleHtml = link
     ? `<a class="provider-link" href="${link}" target="_blank" rel="noopener">${title}</a>`
     : title;
   return `
     <section class="card">
-      <h2>${statusDot(snap)}${titleHtml}<span class="stamp">${stamp}</span></h2>
+      <h2 title="${escapeHtml(snap?.account?.name ?? '')}">${statusDot(snap)}${titleHtml}<span class="stamp">${stamp}</span></h2>
       <div class="body">${body}</div>
     </section>
   `;
@@ -631,6 +633,7 @@ function cleanedHistoryPoints(points) {
 
 function renderHistory(history) {
   latestHistory = history;
+  discoverAccountSeries((history.series ?? []).map(s => s.provider));
   renderSeriesMenu();
   const seriesMap = new Map((history.series ?? []).map(s => [seriesKey(s), s]));
   const selected = CURATED_HISTORY_SERIES
@@ -840,6 +843,7 @@ async function tick() {
     if (!r.ok) throw new Error("HTTP " + r.status);
       const j = await r.json();
     latestUsage = j;
+    discoverAccountSeries(Object.keys(j.providers));
     statusEl.textContent = "live";
     tsEl.textContent = fmtTime(j.timestamp);
     if (hasClaude2 !== !!j.providers.claude2) {
@@ -850,15 +854,29 @@ async function tick() {
       hasCodex2 = !!j.providers.codex2?.data;
       renderSeriesMenu();
     }
-    const order = ["claude"];
-    if (j.providers.claude2) order.push("claude2");
-    order.push("codex");
-    if (j.providers.codex2?.data) order.push("codex2");
+    const order = ["claude", "codex"].flatMap(family => Object.keys(j.providers)
+      .filter(key => new RegExp(`^${family}\\d*$`).test(key))
+      .sort((a, b) => Number(a.slice(family.length) || 1) - Number(b.slice(family.length) || 1)));
     order.push("zai", "jev", "openrouter", "openai");
     grid.innerHTML = order.map(n => card(n, j.providers[n])).join("");
     if (latestHistory) renderHistory(latestHistory);
   } catch (err) {
     statusEl.textContent = "error: " + (err?.message ?? err);
+  }
+}
+
+function discoverAccountSeries(keys) {
+  for (const key of new Set(keys)) {
+    const match = /^(claude|codex)(\d+)$/.exec(key);
+    if (!match || Number(match[2]) < 3) continue;
+    const family = match[1];
+    for (const template of CURATED_HISTORY_SERIES.filter(s => s.key.startsWith(`${family}:`))) {
+      const seriesKey = template.key.replace(`${family}:`, `${key}:`);
+      if (CURATED_HISTORY_SERIES.some(s => s.key === seriesKey)) continue;
+      CURATED_HISTORY_SERIES.push({ ...template, key: seriesKey,
+        label: template.label.replace(/^(Claude|Codex)(?: #1)?/, `$1 #${match[2]}`) });
+      if (template.default) selectedSeriesKeys.add(seriesKey);
+    }
   }
 }
 

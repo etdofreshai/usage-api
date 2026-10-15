@@ -2,6 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { Poller, RateLimitError, staleness } from "../src/cache.ts";
 
+test("removing an account while polling does not restart its timer", async () => {
+  let finish!: (value: number) => void;
+  const poller = new Poller("removed", () => new Promise<number>(resolve => { finish = resolve; }));
+  const pending = (poller as any).tick();
+  poller.stop();
+  finish(42);
+  await pending;
+  assert.equal((poller as any).timer, null);
+});
+
 // Retry-After is honored exactly (even past the ceiling) and does not inflate
 // the steady cadence; a 429 without a hint falls back to doubling.
 test("poller retries at Retry-After, then resumes its normal interval", async () => {

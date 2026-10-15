@@ -866,6 +866,10 @@ async function tick() {
 }
 
 function discoverAccountSeries(keys) {
+  let known;
+  try { known = new Set(JSON.parse(localStorage.getItem("usage-known-account-series") ?? "[]")); }
+  catch { known = new Set(); }
+  let changed = false;
   for (const key of new Set(keys)) {
     const match = /^(claude|codex)(\d+)$/.exec(key);
     if (!match || Number(match[2]) < 3) continue;
@@ -875,8 +879,16 @@ function discoverAccountSeries(keys) {
       if (CURATED_HISTORY_SERIES.some(s => s.key === seriesKey)) continue;
       CURATED_HISTORY_SERIES.push({ ...template, key: seriesKey,
         label: template.label.replace(/^(Claude|Codex)(?: #1)?/, `$1 #${match[2]}`) });
-      if (template.default) selectedSeriesKeys.add(seriesKey);
+      if (!known.has(seriesKey)) {
+        if (template.default) selectedSeriesKeys.add(seriesKey);
+        known.add(seriesKey);
+        changed = true;
+      }
     }
+  }
+  if (changed) {
+    try { localStorage.setItem("usage-known-account-series", JSON.stringify([...known])); } catch {}
+    saveSelectedSeriesKeys();
   }
 }
 

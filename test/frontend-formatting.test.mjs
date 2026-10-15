@@ -226,15 +226,21 @@ test("optional second Codex account remains separate and clearly labeled", () =>
 
 test("new accounts acquire independent history series without duplicating existing ones", () => {
   const fn = html.match(/function discoverAccountSeries\(keys\) \{[\s\S]*?\n\}/)[0];
+  const storage = new Map();
   const sandbox = { CURATED_HISTORY_SERIES: [
     { key: "codex:seven_day", label: "Codex 7-day", default: true },
     { key: "claude:seven_day_fable", label: "Claude Fable 7-day", default: true },
-  ], selectedSeriesKeys: new Set() };
+  ], selectedSeriesKeys: new Set(), localStorage: { getItem: key => storage.get(key) ?? null,
+    setItem: (key, value) => storage.set(key, value) }, saveSelectedSeriesKeys: () => {} };
   vm.createContext(sandbox);
   vm.runInContext(fn + '; discoverAccountSeries(["codex3", "claude12", "codex3", "openai"]); discoverAccountSeries(["codex3"]);', sandbox);
   assert.equal(sandbox.CURATED_HISTORY_SERIES.length, 4);
   assert.equal(sandbox.CURATED_HISTORY_SERIES[2].label, "Codex #3 7-day");
   assert.ok(sandbox.selectedSeriesKeys.has("claude12:seven_day_fable"));
+  sandbox.selectedSeriesKeys.delete("codex3:seven_day");
+  sandbox.CURATED_HISTORY_SERIES.splice(2);
+  vm.runInContext('discoverAccountSeries(["codex3"]);', sandbox);
+  assert.ok(!sandbox.selectedSeriesKeys.has("codex3:seven_day"), "A saved hidden series should stay hidden on reload");
 });
 
 test("dashboard cards link to provider usage pages", () => {

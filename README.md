@@ -195,3 +195,9 @@ If a token ever goes stale, the symptom is an `anthropic oauth/usage HTTP
 401` or `codex usage HTTP 401` in the poller's error field; re-authorising
 that connection in 9router is the fix, and the next poll picks the new token
 up on its own.
+
+## OpenRouter account credits and trailing spending
+
+OpenRouter retains the configured key's `usage`, `limit` and `limit_remaining`. It additionally reads `/api/v1/credits` for `credits_balance` (USD account credits minus account usage). If `OPENROUTER_MANAGEMENT_KEY` is configured, analytics provides `spend_7d` for the exact rolling seven-day `spend_start`/`spend_end` period. Account balance and spending are independent from API-key usage/allowance. Missing/denied/malformed/truncated financial data is null, with `balance_error` / `spend_error`; it is not reported as zero and does not discard a successful key read. Requests use bounded timeouts.
+
+The financial tests use mocked provider responses and do not query real accounts. This change is prepared on a branch because pushing production main auto-deploys this service.

@@ -156,7 +156,7 @@ async function syncAccounts() {
 await syncAccounts();
 setInterval(() => { void syncAccounts().catch(err => console.warn("account discovery failed:", err.message)); }, 30_000);
 const zai = ZAI_KEY ? new Poller("zai", () => fetchZaiUsage(ZAI_KEY), remember("zai")) : null;
-const openrouter = OPENROUTER_KEY ? new Poller("openrouter", () => fetchOpenRouterUsage(OPENROUTER_KEY), remember("openrouter")) : null;
+const openrouter = OPENROUTER_KEY ? new Poller("openrouter", () => fetchOpenRouterUsage(OPENROUTER_KEY, OPENROUTER_MANAGEMENT_KEY), remember("openrouter")) : null;
 const openai = OPENAI_KEY ? new Poller("openai", () => fetchOpenAiUsage(OPENAI_KEY), remember("openai")) : null;
 const jev = OPENROUTER_MANAGEMENT_KEY
   ? new Poller("jev", () => fetchJevUsage(OPENROUTER_MANAGEMENT_KEY))

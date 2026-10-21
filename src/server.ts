@@ -6,6 +6,7 @@ import { Poller } from "./cache.js";
 import { HistoryGranularity, HistoryStore } from "./history.js";
 import { assignAccounts } from "./accounts.js";
 import { CliProxyClient } from "./providers/cliproxy.js";
+import { RecentRequests } from "./recent.js";
 
 // Load env from the shared volume (same .env that ai-sessions uses) so secrets
 // live alongside the OAuth credentials instead of in Dokploy. Run before any
@@ -179,6 +180,15 @@ jev?.start();
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
+});
+
+const recentRequests = process.env.CPA_MANAGER_KEY
+  ? new RecentRequests(process.env.CPA_MANAGER_URL ?? "http://etzminisforumx1pro.lan:18317", process.env.CPA_MANAGER_KEY)
+  : null;
+app.get("/api/recent", async (_req, res) => {
+  if (!recentRequests) { res.json({ source: "cliproxyapi", exchanges: [] }); return; }
+  try { res.json({ source: "cliproxyapi", exchanges: await recentRequests.get() }); }
+  catch { res.status(503).json({ error: "Recent request history is unavailable", exchanges: [] }); }
 });
 
 // Pacing math: given a window of length windowMs ending at resetAt, compute

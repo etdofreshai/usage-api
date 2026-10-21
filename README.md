@@ -17,6 +17,13 @@ preserving account numbers, history and monitor visibility during migration.
 `CLIPROXYAPI_CLAUDE_EMAIL` and `CLIPROXYAPI_CLAUDE2_EMAIL` select the first two
 Claude slots on a fresh install. Keep the management key server-side.
 
+For the monitor's recent-model strip, set `CPA_MANAGER_URL` (default
+`http://etzminisforumx1pro.lan:18317`) and `CPA_MANAGER_KEY`. `/api/recent` returns
+only model, time, effort and outcome for the last 20 recorded requests within
+seven days. It does not return credentials, account identities, IPs or prompts.
+Concurrent monitor reads share a five-second cache. In-progress requests are
+not in the recorded history; unused slots remain grey in the monitor.
+
 Without that key, the legacy source remains available for rollback:
 Claude and Codex usage comes straight from Anthropic and OpenAI, using the
 OAuth token [9router](https://github.com/9cat/9router) already holds and

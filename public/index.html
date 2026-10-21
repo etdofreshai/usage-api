@@ -251,12 +251,12 @@ function renderClaude(snap) {
     ${sub("7-day Sonnet", d.seven_day_sonnet)}
     ${sub("7-day Opus", d.seven_day_opus)}
     ${sub("7-day Design", d.seven_day_design)}
-    ${renderResetCredits(d.reset_credits)}
+    ${renderResetCredits(d.reset_credits, d.reset_credits_checked_at)}
   `;
 }
-function renderResetCredits(rc) {
+function renderResetCredits(rc, checkedAt) {
   return rc && rc.available_count > 0 ? `
-    <div class="sub">↻ ${rc.available_count} full reset${rc.available_count === 1 ? "" : "s"} available${
+    <div class="sub" title="${escapeHtml(checkedAt ? `Checked ${fmtTime(checkedAt)}` : '')}">↻ ${rc.available_count} full reset${rc.available_count === 1 ? "" : "s"} available${
       rc.next_expires_at ? ` · next expires ${fmtRel(rc.next_expires_at)} (${fmtTime(rc.next_expires_at)})` : ""}</div>
   ` : "";
 }
@@ -272,7 +272,7 @@ function renderCodex(snap) {
   const fiveHourNotice = !d.five_hour
     ? `<div class="sub">5-hour limit is not currently reported by Codex</div>`
     : "";
-  const resetCredits = renderResetCredits(d.reset_credits);
+  const resetCredits = renderResetCredits(d.reset_credits, d.reset_credits_checked_at);
   const bal = d.credits_balance;
   const creditsLine = bal == null ? "" : `<div class="sub">credits: ${
     bal === "unlimited" ? "unlimited" : escapeHtml(Number.isFinite(Number(bal)) ? String(Number(bal)) : bal)}</div>`;

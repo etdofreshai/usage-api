@@ -4,6 +4,20 @@ Public, no-auth, always-cached aggregator for AI service usage. Polls
 Claude / Codex / Z.ai / OpenRouter / OpenAI in the background and serves
 the latest snapshot from memory — every request is O(0) network.
 
+Claude and Codex usage is fetched through CLIProxyAPI's authenticated management
+`api-call` endpoint when `CLIPROXYAPI_MANAGEMENT_KEY` is set. CLIProxyAPI owns and
+refreshes OAuth credentials; Usage API receives provider responses, never access
+or refresh tokens. All provider calls are read-only GETs, including reset-credit
+details. Each poll reads current data rather than cached quota headers.
+
+Set `CLIPROXYAPI_URL` (default `http://etzminisforumx1pro.lan:8317`) and
+`CLIPROXYAPI_MANAGEMENT_KEY`. Optional `CLIPROXYAPI_ACCOUNT_ALIASES` is a JSON map
+from old connection IDs to `provider:email` or `provider:email:workspaceId`,
+preserving account numbers, history and monitor visibility during migration.
+`CLIPROXYAPI_CLAUDE_EMAIL` and `CLIPROXYAPI_CLAUDE2_EMAIL` select the first two
+Claude slots on a fresh install. Keep the management key server-side.
+
+Without that key, the legacy source remains available for rollback:
 Claude and Codex usage comes straight from Anthropic and OpenAI, using the
 OAuth token [9router](https://github.com/9cat/9router) already holds and
 refreshes for those accounts. This service manages no Claude/Codex
@@ -41,7 +55,7 @@ Codex usage exposes semantic `five_hour` and `seven_day` windows. Either may be
 
 ## Adaptive polling
 
-Active Claude and Codex connections are discovered in 9router every 30 seconds.
+Active Claude and Codex connections are discovered in the configured source every 30 seconds.
 Existing primary/secondary environment mappings retain `claude`, `claude2`,
 `codex`, and `codex2`; further accounts receive `claude3`, `codex3`, etc.
 Numbers are persisted in `usage-accounts.json` beside the history file, so

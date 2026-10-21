@@ -5,6 +5,7 @@ import express from "express";
 import { Poller } from "./cache.js";
 import { HistoryGranularity, HistoryStore } from "./history.js";
 import { assignAccounts } from "./accounts.js";
+import { CliProxyClient } from "./providers/cliproxy.js";
 
 // Load env from the shared volume (same .env that ai-sessions uses) so secrets
 // live alongside the OAuth credentials instead of in Dokploy. Run before any
@@ -103,8 +104,8 @@ const OPENROUTER_MANAGEMENT_KEY = process.env.OPENROUTER_MANAGEMENT_KEY;
 // An account is named by whichever identifier 9router records for it:
 // Codex connections carry an email, Claude ones may only have a display
 // name ("Account 1").
-const CLAUDE_ACCOUNT = process.env.NINEROUTER_CLAUDE_ACCOUNT?.trim() || undefined;
-const CLAUDE2_ACCOUNT = process.env.NINEROUTER_CLAUDE2_ACCOUNT?.trim() || undefined;
+const CLAUDE_ACCOUNT = process.env.CLIPROXYAPI_CLAUDE_EMAIL?.trim() || process.env.NINEROUTER_CLAUDE_ACCOUNT?.trim() || undefined;
+const CLAUDE2_ACCOUNT = process.env.CLIPROXYAPI_CLAUDE2_EMAIL?.trim() || process.env.NINEROUTER_CLAUDE2_ACCOUNT?.trim() || undefined;
 const CODEX_ACCOUNT = process.env.NINEROUTER_CODEX_ACCOUNT?.trim() || "etdofresh@gmail.com";
 const CODEX2_ACCOUNT = process.env.NINEROUTER_CODEX2_ACCOUNT?.trim() || "etdofresh+dev@gmail.com";
 
@@ -113,7 +114,12 @@ const CODEX2_ACCOUNT = process.env.NINEROUTER_CODEX2_ACCOUNT?.trim() || "etdofre
 const CLAUDE2_OFF = /^(0|false|no|off)$/i.test((process.env.CLAUDE2_ENABLED ?? "").trim());
 const CODEX2_OFF = /^(0|false|no|off)$/i.test((process.env.CODEX2_ENABLED ?? "").trim());
 
-try {
+const cliProxy = process.env.CLIPROXYAPI_MANAGEMENT_KEY
+  ? new CliProxyClient(process.env.CLIPROXYAPI_URL ?? "http://etzminisforumx1pro.lan:8317",
+    process.env.CLIPROXYAPI_MANAGEMENT_KEY, JSON.parse(process.env.CLIPROXYAPI_ACCOUNT_ALIASES ?? "{}"))
+  : null;
+
+if (!cliProxy) try {
   const connections = listConnections();
   console.log(`9router connections: ${connections.map((c) => `${c.provider}:${c.email ?? c.name}`).join(", ") || "none"}`);
 } catch (err: any) {
@@ -126,7 +132,7 @@ try { assignments = JSON.parse(await fs.readFile(ACCOUNTS_FILE, "utf8")); }
 catch (err: any) { if (err?.code !== "ENOENT") throw err; }
 const accountPollers = new Map<string, { connectionId: string; name: string; family: string; poller: Poller<unknown> }>();
 async function syncAccounts() {
-  const connections = listConnections();
+  const connections = cliProxy ? await cliProxy.listAccounts() : listConnections();
   const next = assignAccounts(connections, assignments, {
     claude: CLAUDE_ACCOUNT, claude2: CLAUDE2_ACCOUNT, codex: CODEX_ACCOUNT, codex2: CODEX2_ACCOUNT,
   });
@@ -143,7 +149,7 @@ async function syncAccounts() {
     if (existing) { existing.name = connection.email ?? connection.name; continue; }
     const family = connection.provider;
     const poller = new Poller<unknown>(key,
-      () => family === "claude" ? fetchClaudeUsage(id) : fetchCodexUsage(id), remember(key));
+      () => cliProxy ? cliProxy.fetchUsage(id) : family === "claude" ? fetchClaudeUsage(id) : fetchCodexUsage(id), remember(key));
     const last = lastGood[key];
     if (last) poller.seed(last.data, last.fetchedAt);
     accountPollers.set(key, { connectionId: id, name: connection.email ?? connection.name, family, poller });
@@ -276,6 +282,7 @@ app.get("/api/usage", (_req, res) => {
     providers[key] = {
       ...snapshot, data: enrichProviderData(key, snapshot.data),
       account: { id: account.connectionId, name: account.name, family: account.family },
+      source: cliProxy ? "cliproxyapi" : "9router",
     };
   }
   providers.zai = zai ? enrichZai(zai.snapshot()) : { data: null, error: "ZAI_API_KEY not set" };
